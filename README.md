@@ -1,6 +1,6 @@
 # ResQHub: A LORA MODEL FOR EMERGENCY ASSISTANCE AND EVACUATION GUIDANCE
 
-ResQHub is a capstone project that aims to improve emergency communication, incident reporting, and evacuation guidance in Baguio City through the use of **LoRa (Long Range) technology**.
+ResQHub is a capstone project that aims to improve emergency communication, incident reporting, and evacuation guidance in Baguio City particularly in Military Cut-off.
 
 The system is designed to help residents communicate emergency situations and receive important information, while providing barangay personnel and emergency responders with a way to monitor and coordinate reported incidents.
 
