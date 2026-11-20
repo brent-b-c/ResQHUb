@@ -34,7 +34,7 @@ ResQHub aims to address these challenges by developing an emergency assistance s
 - Manage emergency alerts
 - Access relevant emergency information
 
-### LoRa Communication
+### LoRa Communication (in development)
 
 - Long-range communication between compatible devices
 - Transmission and reception of emergency messages
@@ -44,9 +44,9 @@ ResQHub aims to address these challenges by developing an emergency assistance s
 
 - **Mobile Application:** Android
 - **Programming Language:** Kotlin / Java
-- **Hardware:** ESP32 LoRa Development Board
-- **Communication Technology:** LoRa
-- **Development Tools:** Android Studio, Arduino IDE, Visual Studio Code
+- **Hardware:** ESP32 LoRa Development Board (in development)
+- **Communication Technology:** LoRa (in development)
+- **Development Tools:** Android Studio, Arduino IDE, Supabase
 
 ## Target Users
 
