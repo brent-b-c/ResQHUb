@@ -82,6 +82,39 @@ data class AnnouncementRow(
     val body: String,
     val footer: String,
     val createdAt: String,    // ISO time from the database (UTC)
+    val target: String = "",       // who it is for
+    val authorName: String = "",
+    val authorTitle: String = "",
+    val isActive: Boolean = true, // false = unpublished
+)
+
+data class ProfileRow(
+    val id: String,
+    val fullName: String,
+    val phone: String,
+    val role: String,          // citizen, responder or admin
+    val title: String,         // e.g. BERT Leader
+    val unitName: String,      // e.g. Alpha-2
+    val dutyStatus: String,    // standby, on_duty or busy
+)
+
+data class IncidentRow(
+    val id: String,
+    val code: String,
+    val title: String,
+    val category: String,
+    val severity: String,      // urgent, high or moderate
+    val people: Int,
+    val vulnerable: Boolean,
+    val details: String,
+    val address: String,
+    val lat: Double?,
+    val lon: Double?,
+    val status: String,
+    val createdAt: String,
+    val reporterName: String,
+    val reporterPhone: String,
+    val responderId: String,
 )
 
 object Supabase {
@@ -163,6 +196,119 @@ object Supabase {
         )
     }
 
+    // ---------- Who is logged in ----------
+
+    fun currentUserId(): String? = session?.userId
+
+    suspend fun getMyProfile(): ProfileRow {
+        val id = session?.userId ?: throw ApiException("Please log in again.", 401, true)
+        val o = getRows("/rest/v1/profiles?id=eq.$id&select=*").firstOrNull()
+            ?: throw ApiException("Your profile was not found.")
+        val profile = ProfileRow(
+            id = o.str("id"),
+            fullName = o.str("full_name"),
+            phone = o.str("phone"),
+            role = o.str("role").ifBlank { "citizen" },
+            title = o.str("title"),
+            unitName = o.str("unit_name"),
+            dutyStatus = o.str("duty_status").ifBlank { "standby" },
+        )
+        saveProfileCache(profile)
+        return profile
+    }
+
+    /** The last profile we loaded, so the app still opens correctly with no internet. */
+    fun cachedProfile(): ProfileRow? {
+        val text = prefs.getString("profile_json", null) ?: return null
+        return try {
+            val o = JSONObject(text)
+            ProfileRow(
+                id = o.str("id"),
+                fullName = o.str("full_name"),
+                phone = o.str("phone"),
+                role = o.str("role").ifBlank { "citizen" },
+                title = o.str("title"),
+                unitName = o.str("unit_name"),
+                dutyStatus = o.str("duty_status").ifBlank { "standby" },
+            )
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun saveProfileCache(p: ProfileRow) {
+        val o = JSONObject()
+            .put("id", p.id)
+            .put("full_name", p.fullName)
+            .put("phone", p.phone)
+            .put("role", p.role)
+            .put("title", p.title)
+            .put("unit_name", p.unitName)
+            .put("duty_status", p.dutyStatus)
+        prefs.edit().putString("profile_json", o.toString()).apply()
+    }
+
+    // ---------- Reports: citizen side ----------
+
+    /** Current status of one report (the citizen's dispatch screen polls this). */
+    suspend fun getIncidentStatus(incidentId: String): String =
+        getRows("/rest/v1/incidents?id=eq.$incidentId&select=status")
+            .firstOrNull()?.str("status") ?: "submitted"
+
+    // ---------- Reports: responder side ----------
+
+    suspend fun getIncidents(): List<IncidentRow> =
+        getRows(
+            "/rest/v1/incidents?select=*,reporter:profiles!reporter_id(full_name,phone)" +
+                    "&order=created_at.desc&limit=100"
+        ).map { o ->
+            val reporter = o.optJSONObject("reporter")
+            IncidentRow(
+                id = o.str("id"),
+                code = o.str("code"),
+                title = o.str("title"),
+                category = o.str("category"),
+                severity = o.str("severity"),
+                people = o.optInt("people_count", 1),
+                vulnerable = o.optBoolean("vulnerable", false),
+                details = o.str("details"),
+                address = o.str("address"),
+                lat = if (o.isNull("lat")) null else o.getDouble("lat"),
+                lon = if (o.isNull("lon")) null else o.getDouble("lon"),
+                status = o.str("status"),
+                createdAt = o.str("created_at"),
+                reporterName = reporter?.str("full_name") ?: "",
+                reporterPhone = reporter?.str("phone") ?: "",
+                responderId = o.str("responder_id"),
+            )
+        }
+
+    /** Accept / respond / complete a report (a database function checks the caller is a responder). */
+    suspend fun updateIncidentStatus(incidentId: String, status: String) {
+        callFunction(
+            "update_incident_status",
+            JSONObject().put("p_incident", incidentId).put("p_status", status).toString(),
+        )
+    }
+
+    /** Standby / on_duty / busy. Also updates the saved profile so it survives a restart. */
+    suspend fun setDutyStatus(status: String) {
+        callFunction("set_duty_status", JSONObject().put("p_status", status).toString())
+        cachedProfile()?.let { saveProfileCache(it.copy(dutyStatus = status)) }
+    }
+
+    private suspend fun callFunction(name: String, body: String) {
+        val token = validToken()
+        val (code, text) = request("POST", "/rest/v1/rpc/$name", body, token)
+        if (code !in 200..299) {
+            throw ApiException(
+                message = errorMessage(text, "That action failed. Please try again."),
+                statusCode = code,
+                isAuthError = code == 401,
+            )
+        }
+    }
+
     // ---------- Shared data (read only) ----------
 
     suspend fun getShelters(): List<ShelterRow> =
@@ -195,18 +341,76 @@ object Supabase {
         }
 
     suspend fun getAnnouncements(): List<AnnouncementRow> =
-        getRows("/rest/v1/announcements?select=*&is_active=eq.true&order=created_at.desc&limit=50").map { o ->
-            AnnouncementRow(
-                id = o.str("id"),
-                category = o.str("category"),
-                tone = o.str("tone"),
-                tag = o.str("tag"),
-                title = o.str("title"),
-                body = o.str("body"),
-                footer = o.str("footer"),
-                createdAt = o.str("created_at"),
+        getRows("/rest/v1/announcements?select=*&is_active=eq.true&order=created_at.desc&limit=50")
+            .map { announcementFrom(it) }
+
+    private fun announcementFrom(o: JSONObject) = AnnouncementRow(
+        id = o.str("id"),
+        category = o.str("category"),
+        tone = o.str("tone"),
+        tag = o.str("tag"),
+        title = o.str("title"),
+        body = o.str("body"),
+        footer = o.str("footer"),
+        createdAt = o.str("created_at"),
+        target = o.str("target"),
+        authorName = o.str("author_name"),
+        authorTitle = o.str("author_title"),
+        isActive = o.optBoolean("is_active", true),
+    )
+
+    // ---------- Announcements: responder side ----------
+
+    /** Everything, including unpublished ones (responders are allowed to see those). */
+    suspend fun getAllAnnouncements(): List<AnnouncementRow> =
+        getRows("/rest/v1/announcements?select=*&order=created_at.desc&limit=100")
+            .map { announcementFrom(it) }
+
+    suspend fun createAnnouncement(
+        category: String,
+        tone: String,
+        tag: String,
+        title: String,
+        body: String,
+        target: String,
+        authorName: String,
+        authorTitle: String,
+    ) {
+        val token = validToken()
+        val json = JSONObject()
+            .put("category", category)
+            .put("tone", tone)
+            .put("tag", tag)
+            .put("title", title)
+            .put("body", body)
+            .put("footer", target)
+            .put("target", target)
+            .put("author_name", authorName)
+            .put("author_title", authorTitle)
+            .put("is_live", true)
+            .toString()
+        val (code, text) = request(
+            method = "POST",
+            path = "/rest/v1/announcements",
+            body = json,
+            token = token,
+            extraHeaders = mapOf("Prefer" to "return=minimal"),
+        )
+        if (code !in 200..299) {
+            throw ApiException(
+                message = errorMessage(text, "Could not publish the announcement."),
+                statusCode = code,
+                isAuthError = code == 401,
             )
         }
+    }
+
+    suspend fun setAnnouncementActive(id: String, active: Boolean) {
+        callFunction(
+            "set_announcement_active",
+            JSONObject().put("p_announcement", id).put("p_active", active).toString(),
+        )
+    }
 
     private suspend fun getRows(path: String): List<JSONObject> {
         val token = validToken()

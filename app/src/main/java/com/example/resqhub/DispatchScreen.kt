@@ -78,17 +78,31 @@ private const val CdrrmoNumber = ""
 
 /** What the Report screen hands over when the user submits. */
 data class ReportSummary(
+    val id: String,              // database id, used to follow the status
     val code: String,            // e.g. BGO-MC-1000, created by the database
     val categoryLabel: String,
     val severity: String,
     val people: Int,
 )
 
+/** What the red bar says, depending on how far the responders have got. */
+private fun dispatchStatusText(status: String) = when (status) {
+    "submitted" -> "REPORT SENT • WAITING FOR RESPONDERS"
+    "acknowledged" -> "REPORT RECEIVED • PREPARING RESPONSE"
+    "dispatched" -> "RESPONDERS ASSIGNED"
+    "en_route" -> "DISPATCH ACTIVE • UNITS EN ROUTE"
+    "on_site" -> "RESPONDERS ON SITE"
+    "completed" -> "RESOLVED"
+    "cancelled" -> "REPORT CANCELLED"
+    else -> "REPORT SENT"
+}
+
 // ---------- Screen ----------
 
 @Composable
 fun DispatchScreen(
     summary: ReportSummary,
+    status: String = "submitted",
     modifier: Modifier = Modifier,
     userLocation: UserLocation? = null,   // not used on this screen right now
     onSos: () -> Unit = {},               // not used on this screen right now
@@ -108,6 +122,7 @@ fun DispatchScreen(
         DispatchHeader(onProfile = onProfile)
 
         DispatchSummaryCard(
+            status = status,
             incidentId = "#${summary.code}",
             title = "Brgy. Military Cut-off • ${summary.categoryLabel}",
             subtitle = "${summary.severity} • ${summary.people} " +
@@ -210,6 +225,7 @@ private fun DispatchHeader(onProfile: () -> Unit) {
 
 @Composable
 private fun DispatchSummaryCard(
+    status: String,
     incidentId: String,
     title: String,
     subtitle: String,
@@ -243,7 +259,7 @@ private fun DispatchSummaryCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = "DISPATCH ACTIVE • UNITS EN ROUTE",
+                        text = dispatchStatusText(status),
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,

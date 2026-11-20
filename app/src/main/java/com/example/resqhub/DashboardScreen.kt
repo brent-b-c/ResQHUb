@@ -80,6 +80,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -97,16 +99,33 @@ private val BlueAccent = Color(0xFF4F46E5)
 private val BlueTint = Color(0xFFEEF0FF)
 
 @Composable
-fun DashboardScreen(onLogout: () -> Unit) {
+fun CitizenApp(onLogout: () -> Unit) {
     val context = LocalContext.current
+    val uid = Supabase.currentUserId().orEmpty()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dispatch by remember { mutableStateOf<ReportSummary?>(null) }
-    val reportViewModel: ReportViewModel = viewModel()
-    val contentViewModel: ContentViewModel = viewModel()
+    var dispatchStatus by remember { mutableStateOf("submitted") }
+    val reportViewModel: ReportViewModel = viewModel(key = "report-$uid")
+    val contentViewModel: ContentViewModel = viewModel(key = "content-$uid")
 
     // Refresh the shared lists whenever the user opens a tab that shows them.
     LaunchedEffect(selectedTab) {
         if (selectedTab != 2) contentViewModel.refresh()
+    }
+    // While a report is open, check its status every 6 seconds so the user sees the responders' progress.
+    LaunchedEffect(dispatch?.id) {
+        val id = dispatch?.id ?: return@LaunchedEffect
+        dispatchStatus = "submitted"
+        while (true) {
+            try {
+                dispatchStatus = Supabase.getIncidentStatus(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // No signal right now; keep showing the last status and try again.
+            }
+            delay(6_000)
+        }
     }
     // If the login has expired, go back to the login screen.
     LaunchedEffect(contentViewModel.authExpired) {
@@ -163,6 +182,7 @@ fun DashboardScreen(onLogout: () -> Unit) {
                 if (active != null) {
                     DispatchScreen(
                         summary = active,
+                        status = dispatchStatus,
                         modifier = Modifier.padding(innerPadding),
                         userLocation = userLocation,
                         onSos = triggerSos,
@@ -385,7 +405,7 @@ private fun SosHoldCard(onSos: () -> Unit) {
 @Preview(showBackground = true, showSystemUi = true)
 @Composable
 private fun DashboardPreview() {
-    DashboardScreen(onLogout = {})
+    CitizenApp(onLogout = {})
 }
 
 // ---------- Hotlines ----------

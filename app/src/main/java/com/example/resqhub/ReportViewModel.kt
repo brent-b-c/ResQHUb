@@ -33,6 +33,7 @@ class ReportViewModel(app: Application) : AndroidViewModel(app) {
                 val created = Supabase.createIncident(draft)
                 onSuccess(
                     ReportSummary(
+                        id = created.id,
                         code = created.code,
                         categoryLabel = draft.categoryLabel,
                         severity = draft.severityLabel,
