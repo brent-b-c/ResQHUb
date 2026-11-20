@@ -28,16 +28,17 @@ import androidx.compose.material.icons.filled.Accessibility
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.Block
+import androidx.compose.material.icons.filled.CarCrash
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -65,9 +66,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
@@ -101,7 +105,7 @@ private data class IncidentCategory(
 )
 
 private val IncidentCategories = listOf(
-    IncidentCategory("flood", "Flood", "Surge / Rising water", Icons.Filled.WaterDrop, BlueAccent, BlueTint),
+    IncidentCategory("accident", "Road Accident", "Collision / Vehicular", Icons.Filled.CarCrash, ResqRed, ResqRedTint),
     IncidentCategory("trapped", "Trapped", "Roof / Cut off", Icons.Filled.Accessibility, BlueAccent, BlueTint),
     IncidentCategory("fire", "Fire", "Smoke / Blaze", Icons.Filled.LocalFireDepartment, AmberAccent, AmberTint),
     IncidentCategory("medical", "Medical", "Injury / Trauma", Icons.Filled.MedicalServices, SafeGreen, SafeGreenTint),
@@ -128,8 +132,6 @@ fun ReportScreen(
     var people by rememberSaveable { mutableIntStateOf(1) }
     var vulnerable by rememberSaveable { mutableStateOf(false) }
     var details by rememberSaveable { mutableStateOf("") }
-
-    val gpsText = userLocation?.let { "GPS ±${it.accuracyM.toInt()}m" } ?: "GPS searching..."
 
     // Progress: category + location + severity + details
     val done = listOf(
@@ -166,7 +168,7 @@ fun ReportScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        ReportHeader(gpsText = gpsText, onSos = onSos, onProfile = onProfile)
+        ReportHeader(onProfile = onProfile)
 
         ProgressBlock(step = minOf(done + 1, 4), percent = done * 25)
 
@@ -178,7 +180,7 @@ fun ReportScreen(
                 color = InkDark,
             )
             Text(
-                text = "Direct LoRa mesh triage to Brgy. Military Cut-off BERT & Baguio City CDRRMO.",
+                text = "Direct to Brgy. Military Cut-off BERT",
                 fontSize = 13.sp,
                 color = InkMuted,
             )
@@ -257,7 +259,7 @@ fun ReportScreen(
                 onValueChange = { if (it.length <= 200) details = it },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = {
-                    Text("Describe what is happening (kept short so it fits a LoRa packet)", fontSize = 13.sp)
+                    Text("Type incident details, hazards, or immediate needs here.", fontSize = 13.sp)
                 },
                 minLines = 3,
                 maxLines = 5,
@@ -275,7 +277,6 @@ fun ReportScreen(
             )
         }
 
-        RelayInfoCard()
 
         Button(
             onClick = { submit() },
@@ -319,7 +320,7 @@ fun ReportScreen(
 // ---------- Header and progress ----------
 
 @Composable
-private fun ReportHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> Unit) {
+private fun ReportHeader(onProfile: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -327,12 +328,12 @@ private fun ReportHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> Un
         Box(
             modifier = Modifier
                 .size(40.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(CircleShape)
                 .background(Brush.linearGradient(listOf(ResqRedLight, ResqRed))),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
-                imageVector = Icons.Filled.Shield,
+                imageVector = Icons.Filled.PowerSettingsNew,
                 contentDescription = null,
                 tint = Color.White,
                 modifier = Modifier.size(22.dp),
@@ -341,51 +342,26 @@ private fun ReportHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> Un
 
         Spacer(Modifier.width(10.dp))
 
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "resQHub",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = InkDark,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "LIVE",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = SafeGreen,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(SafeGreenTint)
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(SafeGreen)
-                )
-                Spacer(Modifier.width(5.dp))
-                Text(text = gpsText, fontSize = 11.sp, color = InkMuted)
-            }
-        }
-
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(ResqRed)
-                .clickable { onSos() }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = "SOS",
-                color = Color.White,
+                text = buildAnnotatedString {
+                    append("resQ")
+                    withStyle(SpanStyle(color = ResqRed)) { append("Hub") }
+                },
+                fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
+                color = InkDark,
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "LIVE",
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                color = ResqRed,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(ResqRedTint)
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
             )
         }
 
@@ -808,67 +784,5 @@ private fun MediaButton(
         }
         Text(text = title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = InkDark)
         Text(text = subtitle, fontSize = 11.sp, color = InkMuted)
-    }
-}
-
-// ---------- Relay info ----------
-
-@Composable
-private fun RelayInfoCard() {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(BlueTint)
-            .border(1.dp, BlueAccent.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
-            .padding(14.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(Color.White),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.SettingsInputAntenna,
-                contentDescription = null,
-                tint = BlueAccent,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-
-        Spacer(Modifier.width(12.dp))
-
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = "Brgy. Military Cut-off BERT & CDRRMO",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = InkDark,
-            )
-            // TEMPORARY wording: confirm the real channel and node ID once the LoRa nodes are set up
-            Text(
-                text = "Brgy. Military Cut-off BERT (CH-04) & CDRRMO Mesh Relay. Automated packet " +
-                        "transmission via LoRa Node #MC-01 with zero cellular dependency.",
-                fontSize = 11.sp,
-                color = InkMuted,
-            )
-        }
-
-        Spacer(Modifier.width(8.dp))
-
-        Text(
-            text = "CH-04",
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            color = InkDark,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color.White)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        )
     }
 }

@@ -1,0 +1,483 @@
+package com.example.resqhub
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+private val ResqRed = Color(0xFFA81F1B)
+private val ResqRedLight = Color(0xFFC8372D)
+private val ResqRedTint = Color(0xFFFDEEEC)
+private val ScreenBg = Color(0xFFF6F7F9)
+private val InkDark = Color(0xFF1B1F2A)
+private val InkMuted = Color(0xFF6B7280)
+private val SafeGreen = Color(0xFF2E9E6B)
+private val SafeGreenTint = Color(0xFFE9F8F0)
+private val BorderGray = Color(0xFFE5E7EB)
+private val BlueAccent = Color(0xFF4F46E5)
+private val BlueTint = Color(0xFFEEF0FF)
+
+// ---------- Data (TEMPORARY sample data; later loaded from the database) ----------
+
+private enum class Tone { CRITICAL, GOOD, INFO }
+
+private data class Announcement(
+    val id: String,
+    val category: String,          // matches one of the filter chips
+    val tag: String,
+    val tone: Tone,
+    val timeAgo: String,
+    val title: String,
+    val body: String,
+    val footer: String,
+    val footerIcon: ImageVector,
+)
+
+private val Filters = listOf("All", "Barangay Official", "Weather & Hazards")
+
+private val CriticalAdvisory = Announcement(
+    id = "adv-1",
+    category = "Weather & Hazards",
+    tag = "CRITICAL ADVISORY • CDRRMO",
+    tone = Tone.CRITICAL,
+    timeAgo = "15m ago",
+    title = "Preemptive Advisory: Heavy Downpour Expected along Kennon & Military Cut-off",
+    body = "Continuous rainfall monitored over Baguio ridge. Drainage response crews deployed " +
+            "along Lower Military Cut-off Rd. Motorists are advised to avoid slippery bends and " +
+            "maintain safe braking distance.",
+    footer = "Baguio CDRRMO",
+    footerIcon = Icons.Filled.Shield,
+)
+
+private val Bulletins = listOf(
+    Announcement(
+        id = "bul-1",
+        category = "Barangay Official",
+        tag = "ROAD PASSABLE",
+        tone = Tone.GOOD,
+        timeAgo = "45m ago",
+        title = "Military Cut-off Rd to Panagbenga Park Corridor Clear",
+        body = "Fallen tree branches and gravel cleared by barangay volunteer team at 2:30 PM. " +
+                "Normal vehicle traffic flow restored both lanes.",
+        footer = "Verified by Brgy. BERT Logistics Team",
+        footerIcon = Icons.Filled.CheckCircle,
+    ),
+    Announcement(
+        id = "bul-2",
+        category = "Barangay Official",
+        tag = "INSPECTION COMPLETED",
+        tone = Tone.INFO,
+        timeAgo = "2h ago",
+        title = "Retaining Wall & Drainage Inspection",
+        body = "On-site assessment conducted following resident alert. No structural cracks or soil " +
+                "movement observed on the slope barrier. Weepholes flowing smoothly.",
+        footer = "Kagawad M. Ramos • Civil Safety Desk",
+        footerIcon = Icons.Filled.Person,
+    ),
+    Announcement(
+        id = "bul-3",
+        category = "Barangay Official",
+        tag = "RESOLVED",
+        tone = Tone.GOOD,
+        timeAgo = "4h ago",
+        title = "BENECO Power Line Check",
+        body = "Minor secondary line sparking reported at noon has been cleared by BENECO emergency " +
+                "crew. Power distribution remains stable with zero planned brownouts.",
+        footer = "Coordinated via City Dispatch",
+        footerIcon = Icons.Filled.CheckCircle,
+    ),
+)
+
+// ---------- Screen ----------
+
+@Composable
+fun AnnouncementsScreen(
+    modifier: Modifier = Modifier,
+    onProfile: () -> Unit = {},
+    onReport: () -> Unit = {},
+    onMapView: () -> Unit = {},
+) {
+    var filter by rememberSaveable { mutableStateOf("All") }
+
+    val showCritical = filter == "All" || CriticalAdvisory.category == filter
+    val visibleBulletins = Bulletins.filter { filter == "All" || it.category == filter }
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(ScreenBg)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        AnnouncementsHeader(onProfile = onProfile)
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = Icons.Filled.LocationOn,
+                contentDescription = null,
+                tint = ResqRed,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = "Brgy. Military Cut-off",
+                fontSize = 12.sp,
+                color = InkMuted,
+            )
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                text = "Announcements",
+                fontSize = 24.sp,
+                fontWeight = FontWeight.ExtraBold,
+                color = InkDark,
+            )
+            Text(
+                text = "Official updates & verified reports for your neighborhood",
+                fontSize = 13.sp,
+                color = InkMuted,
+            )
+        }
+
+        FilterRow(selected = filter, onSelect = { filter = it })
+
+        if (showCritical) {
+            AnnouncementCard(item = CriticalAdvisory, onMapView = onMapView)
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Community Bulletins",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = InkDark,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${visibleBulletins.size} Active",
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = ResqRed,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(ResqRedTint)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
+
+        if (visibleBulletins.isEmpty()) {
+            Text(
+                text = "No community bulletins in this category.",
+                fontSize = 13.sp,
+                color = InkMuted,
+            )
+        }
+
+        visibleBulletins.forEach { bulletin ->
+            AnnouncementCard(item = bulletin)
+        }
+
+        HazardCta(onReport = onReport)
+
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+// ---------- Header and filters ----------
+
+@Composable
+private fun AnnouncementsHeader(onProfile: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Brush.linearGradient(listOf(ResqRedLight, ResqRed))),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Shield,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        Spacer(Modifier.width(10.dp))
+
+        Text(
+            text = "resQHub",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = InkDark,
+            modifier = Modifier.weight(1f),
+        )
+
+        IconButton(onClick = onProfile) {
+            Icon(
+                imageVector = Icons.Outlined.Person,
+                contentDescription = "Profile / Log out",
+                tint = InkDark,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterRow(selected: String, onSelect: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Filters.forEach { name ->
+            val isSelected = name == selected
+            Text(
+                text = name,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isSelected) Color.White else InkDark,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(if (isSelected) InkDark else Color.White)
+                    .border(1.dp, if (isSelected) InkDark else BorderGray, CircleShape)
+                    .clickable { onSelect(name) }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+            )
+        }
+    }
+}
+
+// ---------- Cards ----------
+
+@Composable
+private fun AnnouncementCard(item: Announcement, onMapView: (() -> Unit)? = null) {
+    val accent = when (item.tone) {
+        Tone.CRITICAL -> ResqRed
+        Tone.GOOD -> SafeGreen
+        Tone.INFO -> BlueAccent
+    }
+    val tagBg = when (item.tone) {
+        Tone.CRITICAL -> ResqRedTint
+        Tone.GOOD -> SafeGreenTint
+        Tone.INFO -> BlueTint
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, BorderGray),
+    ) {
+        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+            Box(
+                Modifier
+                    .width(4.dp)
+                    .fillMaxHeight()
+                    .background(accent)
+            )
+
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(tagBg)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (item.tone == Tone.CRITICAL) {
+                            Icon(
+                                imageVector = Icons.Filled.Warning,
+                                contentDescription = null,
+                                tint = accent,
+                                modifier = Modifier.size(11.dp),
+                            )
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(
+                            text = item.tag,
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = accent,
+                        )
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(text = item.timeAgo, fontSize = 11.sp, color = InkMuted)
+                }
+
+                Text(
+                    text = item.title,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = InkDark,
+                )
+                Text(
+                    text = item.body,
+                    fontSize = 12.sp,
+                    color = InkMuted,
+                )
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = item.footerIcon,
+                            contentDescription = null,
+                            tint = if (item.tone == Tone.CRITICAL) accent else InkMuted,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = item.footer,
+                            fontSize = 11.sp,
+                            color = InkMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (onMapView != null) {
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(
+                            onClick = onMapView,
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, BorderGray),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = InkDark),
+                        ) {
+                            Text("Map View  >", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HazardCta(onReport: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = BlueTint),
+        border = BorderStroke(1.dp, BlueAccent.copy(alpha = 0.15f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(ResqRedTint),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Campaign,
+                        contentDescription = null,
+                        tint = ResqRed,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Notice a hazard in Military Cut-off?",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = InkDark,
+                    )
+                    Text(
+                        text = "Submit photos and coordinates to notify BERT field dispatch immediately.",
+                        fontSize = 11.sp,
+                        color = InkMuted,
+                    )
+                }
+            }
+
+            Button(
+                onClick = onReport,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = ResqRed),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.NotificationsActive,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text("Report an Incident", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}

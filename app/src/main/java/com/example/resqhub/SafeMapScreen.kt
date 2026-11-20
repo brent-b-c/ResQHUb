@@ -1,9 +1,8 @@
 package com.example.resqhub
 
-import android.content.Context
 import android.content.Intent
+import android.location.Location
 import android.net.Uri
-import android.view.MotionEvent
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -27,17 +26,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Accessible
+import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MedicalServices
-import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WaterDrop
@@ -48,7 +49,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -71,18 +71,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
-import org.osmdroid.config.Configuration
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.CustomZoomButtonsController
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
-
 
 private val ResqRed = Color(0xFFA81F1B)
 private val ResqRedLight = Color(0xFFC8372D)
@@ -98,17 +88,7 @@ private val BlueTint = Color(0xFFEEF0FF)
 private val AmberAccent = Color(0xFFF59E0B)
 private val AmberTint = Color(0xFFFEF6E4)
 
-// ---------- Shared map setup (used by every map in the app) ----------
-
-internal fun configureOsmdroid(context: Context) {
-    Configuration.getInstance().apply {
-        userAgentValue = "resQHub/1.0 (capstone project; Android; contact: YOUR_EMAIL_HERE)"
-        osmdroidBasePath = File(context.cacheDir, "osmdroid2")
-        osmdroidTileCache = File(context.cacheDir, "osmdroid2/tiles")
-    }
-}
-
-// ---------- Sample data (TEMPORARY: replace with the database / LoRa updates later) ----------
+// ---------- Sample data (TEMPORARY: replace with the database later) ----------
 
 private data class Amenity(
     val label: String,
@@ -121,58 +101,74 @@ private data class Shelter(
     val id: String,
     val name: String,
     val via: String,
-    val distanceKm: Double,
+    val distanceM: Int,
     val walkMin: Int,
     val driveMin: Int,
-    val used: Int,
-    val total: Int,
-    val intake: String,
-    val floodSafe: Boolean,
+    val primary: Boolean,
     val amenities: List<Amenity>,
-    val point: GeoPoint,
+    val lat: Double,
+    val lon: Double,
     val phone: String,
-) {
-    val percent: Int get() = used * 100 / total
-}
+)
 
 private val MedicStation = Amenity("Medic Station", Icons.Filled.MedicalServices, SafeGreen, SafeGreenTint)
 private val GeneratorBackup = Amenity("Generator Backup", Icons.Filled.Bolt, AmberAccent, AmberTint)
 private val PotableWater = Amenity("Potable Water Fill", Icons.Filled.WaterDrop, BlueAccent, BlueTint)
 private val AdaAccess = Amenity("ADA Compliant Access", Icons.Filled.Accessible, BlueAccent, BlueTint)
+private val ChargingPoint = Amenity("Charging Point", Icons.Filled.BatteryChargingFull, AmberAccent, AmberTint)
+private val FamilyTents = Amenity("Family Tents", Icons.Filled.Groups, SafeGreen, SafeGreenTint)
 
-// TODO: replace coordinates, capacities and phone numbers with real data
+// TODO: replace coordinates, distances and phone numbers with real data
 private val SampleShelters = listOf(
     Shelter(
         id = "BGO-S01",
         name = "Baguio Convention Center",
         via = "Gov. Pack Rd",
-        distanceKm = 1.2,
+        distanceM = 1200,
         walkMin = 6,
         driveMin = 3,
-        used = 520,
-        total = 800,
-        intake = "Gate 2",
-        floodSafe = true,
+        primary = true,
         amenities = listOf(MedicStation, GeneratorBackup, PotableWater, AdaAccess),
-        point = GeoPoint(16.4115, 120.5930),
+        lat = 16.4115,
+        lon = 120.5930,
         phone = "",
     ),
     Shelter(
-        id = "BGO-S02",
-        name = "Teachers Camp Gym",
-        via = "Leonard Wood Rd",
-        distanceKm = 2.5,
-        walkMin = 14,
+        id = "BGO-S03",
+        name = "Military Cut-off Barangay Hall & Court",
+        via = "Military Cut-off Rd",
+        distanceM = 650,
+        walkMin = 8,
+        driveMin = 3,
+        primary = false,
+        amenities = listOf(ChargingPoint),
+        lat = 16.4048,
+        lon = 120.5990,
+        phone = "",
+    ),
+    Shelter(
+        id = "BGO-S05",
+        name = "PFVR Gym & Youth Center",
+        via = "Upper Session Rd",
+        distanceM = 1800,
+        walkMin = 22,
         driveMin = 6,
-        used = 200,
-        total = 500,
-        intake = "Main entrance",
-        floodSafe = true,
-        amenities = listOf(MedicStation, PotableWater),
-        point = GeoPoint(16.4130, 120.6000),
+        primary = false,
+        amenities = listOf(FamilyTents),
+        lat = 16.4080,
+        lon = 120.6010,
         phone = "",
     ),
 )
+
+private fun metersBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
+    val result = FloatArray(1)
+    Location.distanceBetween(lat1, lon1, lat2, lon2, result)
+    return result[0].roundToInt()
+}
+
+private fun formatDistance(meters: Int): String =
+    if (meters < 1000) "$meters m" else "%.1f km".format(java.util.Locale.US, meters / 1000.0)
 
 // ---------- Screen ----------
 
@@ -180,32 +176,33 @@ private val SampleShelters = listOf(
 fun SafeMapScreen(
     modifier: Modifier = Modifier,
     userLocation: UserLocation? = null,
-    onSos: () -> Unit = {},
+    onSos: () -> Unit = {},       // not used on this screen right now
     onProfile: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
-    var selectedId by rememberSaveable { mutableStateOf(SampleShelters.first().id) }
 
-    val userPoint = userLocation?.let { GeoPoint(it.latitude, it.longitude) }
-
-    // With GPS: recompute distance and walk/drive time, nearest first.
+    // With GPS (and a phone that is actually near Baguio): real distance and walk/drive time.
+    // Otherwise the sample values are shown. Primary hub first, then nearest.
     val shelters = remember(userLocation) {
-        if (userPoint == null) {
-            SampleShelters
-        } else {
+        val loc = userLocation
+        val first = SampleShelters.first()
+        val nearBaguio = loc != null &&
+                metersBetween(loc.latitude, loc.longitude, first.lat, first.lon) < 20_000
+        val list = if (loc != null && nearBaguio) {
             SampleShelters.map { s ->
-                val km = userPoint.distanceToAsDouble(s.point) / 1000.0
+                val m = metersBetween(loc.latitude, loc.longitude, s.lat, s.lon)
                 s.copy(
-                    distanceKm = (km * 10).roundToInt() / 10.0,
-                    walkMin = max(1, (km / 5.0 * 60).roundToInt()),
-                    driveMin = max(1, (km / 30.0 * 60).roundToInt()),
+                    distanceM = m,
+                    walkMin = max(1, (m / 1000.0 / 5.0 * 60).roundToInt()),
+                    driveMin = max(1, (m / 1000.0 / 30.0 * 60).roundToInt()),
                 )
-            }.sortedBy { it.distanceKm }
+            }
+        } else {
+            SampleShelters
         }
+        list.sortedWith(compareByDescending<Shelter> { it.primary }.thenBy { it.distanceM })
     }
-
-    val gpsText = userLocation?.let { "GPS \u00B1${it.accuracyM.toInt()}m" } ?: "GPS searching..."
 
     val visible = remember(query, shelters) {
         shelters.filter {
@@ -214,10 +211,39 @@ fun SafeMapScreen(
                     it.via.contains(query, ignoreCase = true)
         }
     }
-    val selected = visible.firstOrNull { it.id == selectedId } ?: visible.firstOrNull()
 
     fun comingSoon() {
         Toast.makeText(context, "Coming soon", Toast.LENGTH_SHORT).show()
+    }
+
+    fun openDirections(shelter: Shelter) {
+        // Opens the phone's own maps app. Needs internet or the user's offline maps there.
+        val label = Uri.encode(shelter.name)
+        val uri = Uri.parse("geo:0,0?q=${shelter.lat},${shelter.lon}($label)")
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+            .onFailure {
+                Toast.makeText(context, "No map app found", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    fun callShelter(shelter: Shelter) {
+        if (shelter.phone.isBlank()) {
+            Toast.makeText(context, "Number not set yet", Toast.LENGTH_SHORT).show()
+        } else {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${shelter.phone}")))
+            }
+        }
+    }
+
+    fun share(shelter: Shelter) {
+        val text = "${shelter.name} (${shelter.id}) - " +
+                "https://www.openstreetmap.org/?mlat=${shelter.lat}&mlon=${shelter.lon}"
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        runCatching { context.startActivity(Intent.createChooser(send, "Share shelter")) }
     }
 
     Column(
@@ -228,52 +254,50 @@ fun SafeMapScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SafeMapHeader(gpsText = gpsText, onSos = onSos, onProfile = onProfile)
-        SessionBanner()
+        SafeMapHeader(onProfile = onProfile)
+        LocationPill()
         ShelterSearchBar(query = query, onChange = { query = it })
-        FilterChipsRow(shelterCount = visible.size, onComingSoon = ::comingSoon)
+        FilterChipsRow(shelterCount = shelters.size, onComingSoon = ::comingSoon)
 
-        MapSection(
-            shelters = visible,
-            selectedId = selected?.id,
-            userPoint = userPoint,
-            onSelect = { selectedId = it },
-            onComingSoon = ::comingSoon,
-        )
-
-        RouteTicker()
-
-        if (selected != null) {
-            ShelterDetailCard(
-                shelter = selected,
-                onNavigate = {
-                    val label = Uri.encode(selected.name)
-                    val uri = Uri.parse("geo:0,0?q=${selected.point.latitude},${selected.point.longitude}($label)")
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                        .onFailure {
-                            Toast.makeText(context, "No map app found", Toast.LENGTH_SHORT).show()
-                        }
-                },
-                onDesk = {
-                    if (selected.phone.isBlank()) {
-                        Toast.makeText(context, "Desk number not set yet", Toast.LENGTH_SHORT).show()
-                    } else {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${selected.phone}")))
-                        }
-                    }
-                },
-                onShare = {
-                    val text = "${selected.name} (${selected.id}) - " +
-                            "https://www.openstreetmap.org/?mlat=${selected.point.latitude}&mlon=${selected.point.longitude}"
-                    val send = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, text)
-                    }
-                    runCatching { context.startActivity(Intent.createChooser(send, "Share shelter")) }
-                },
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Evacuation Stations",
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = InkDark,
             )
-        } else {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "${visible.size} Active",
+                fontSize = 10.sp,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                color = ResqRed,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(ResqRedTint)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(Color(0xFFE9ECF1))
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.SwapVert,
+                    contentDescription = null,
+                    tint = InkMuted,
+                    modifier = Modifier.size(12.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(text = "Nearest first", fontSize = 10.sp, color = InkMuted)
+            }
+        }
+
+        if (visible.isEmpty()) {
             Text(
                 text = "No shelters match your search.",
                 color = InkMuted,
@@ -281,16 +305,23 @@ fun SafeMapScreen(
             )
         }
 
-        visible.filter { it.id != selected?.id }.forEach { shelter ->
-            ShelterRow(shelter = shelter, onView = { selectedId = shelter.id })
+        visible.forEach { shelter ->
+            ShelterCard(
+                shelter = shelter,
+                onDirections = { openDirections(shelter) },
+                onContact = { callShelter(shelter) },
+                onShare = { share(shelter) },
+            )
         }
+
+        Spacer(Modifier.height(8.dp))
     }
 }
 
-// ---------- Header, banner, search, chips ----------
+// ---------- Header, location, search, chips ----------
 
 @Composable
-private fun SafeMapHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> Unit) {
+private fun SafeMapHeader(onProfile: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -312,49 +343,13 @@ private fun SafeMapHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> U
 
         Spacer(Modifier.width(10.dp))
 
-        Column(Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "resQHub",
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = InkDark,
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "LIVE",
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = SafeGreen,
-                    modifier = Modifier
-                        .clip(CircleShape)
-                        .background(SafeGreenTint)
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
-            // TEMPORARY text: GPS accuracy and cache status come from real data later
-            Text(
-                text = "$gpsText \u2022 Cache 100%",
-                fontSize = 11.sp,
-                color = InkMuted,
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(ResqRed)
-                .clickable { onSos() }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "SOS",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-            )
-        }
+        Text(
+            text = "resQHub",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Bold,
+            color = InkDark,
+            modifier = Modifier.weight(1f),
+        )
 
         IconButton(onClick = onProfile) {
             Icon(
@@ -367,7 +362,7 @@ private fun SafeMapHeader(gpsText: String, onSos: () -> Unit, onProfile: () -> U
 }
 
 @Composable
-private fun SessionBanner() {
+private fun LocationPill() {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -377,32 +372,19 @@ private fun SessionBanner() {
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(ResqRed)
+        Icon(
+            imageVector = Icons.Filled.LocationOn,
+            contentDescription = null,
+            tint = ResqRed,
+            modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "Session Rd \u2022 Baguio City Center Hub",
+            text = "Military Cut-off Rd, Brgy. Military Cut-off, Baguio City",
             fontSize = 12.sp,
             color = InkDark,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = "LORA MESH",
-            fontSize = 9.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            color = SafeGreen,
-            modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(SafeGreenTint)
-                .padding(horizontal = 6.dp, vertical = 3.dp),
         )
     }
 }
@@ -512,200 +494,24 @@ private fun FilterPill(
     }
 }
 
-// ---------- Map ----------
+// ---------- Shelter card ----------
 
 @Composable
-private fun MapSection(
-    shelters: List<Shelter>,
-    selectedId: String?,
-    userPoint: GeoPoint?,
-    onSelect: (String) -> Unit,
-    onComingSoon: () -> Unit,
-) {
-    var layer by remember { mutableStateOf("TOPO") }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(260.dp)
-            .clip(RoundedCornerShape(20.dp))
-            .border(1.dp, BorderGray, RoundedCornerShape(20.dp)),
-    ) {
-        SheltersMapView(
-            shelters = shelters,
-            selectedId = selectedId,
-            userPoint = userPoint,
-            onSelect = onSelect,
-            modifier = Modifier.fillMaxSize(),
-        )
-
-        // Layer switch (only TOPO works for now; SAT and RADAR need extra data sources)
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(10.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.White.copy(alpha = 0.95f))
-                .padding(3.dp),
-        ) {
-            listOf("TOPO", "SAT", "RADAR").forEach { name ->
-                val isSelected = layer == name
-                Text(
-                    text = name,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isSelected) Color.White else InkMuted,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(if (isSelected) InkDark else Color.Transparent)
-                        .clickable {
-                            if (name == "TOPO") layer = name else onComingSoon()
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SheltersMapView(
-    shelters: List<Shelter>,
-    selectedId: String?,
-    userPoint: GeoPoint?,
-    onSelect: (String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            configureOsmdroid(ctx)
-            MapView(ctx).apply {
-                setTileSource(TileSourceFactory.MAPNIK)
-                setMultiTouchControls(true)
-                zoomController.setVisibility(CustomZoomButtonsController.Visibility.NEVER)
-                controller.setZoom(15.0)
-                controller.setCenter(SampleShelters.first().point)
-
-                // Let the map pan instead of the page scrolling while a finger is on the map
-                setOnTouchListener { v, event ->
-                    when (event.actionMasked) {
-                        MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE ->
-                            v.parent?.requestDisallowInterceptTouchEvent(true)
-                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                            v.parent?.requestDisallowInterceptTouchEvent(false)
-                    }
-                    false
-                }
-                onResume()
-            }
-        },
-        update = { map ->
-            map.overlays.clear()
-            shelters.forEach { shelter ->
-                map.overlays.add(
-                    Marker(map).apply {
-                        position = shelter.point
-                        title = shelter.name
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                        setOnMarkerClickListener { _, _ ->
-                            onSelect(shelter.id)
-                            true
-                        }
-                    }
-                )
-            }
-
-            // "You are here" marker (skipped if the phone is far from Baguio, e.g. an emulator)
-            if (userPoint != null &&
-                userPoint.distanceToAsDouble(SampleShelters.first().point) < 20_000.0
-            ) {
-                map.overlays.add(
-                    Marker(map).apply {
-                        position = userPoint
-                        title = "You are here"
-                        icon = ContextCompat.getDrawable(map.context, android.R.drawable.ic_menu_mylocation)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    }
-                )
-            }
-
-            // Move the camera only when the selected shelter changes
-            val selected = shelters.firstOrNull { it.id == selectedId }
-            if (selected != null && map.tag != selected.id) {
-                map.controller.animateTo(selected.point)
-                map.tag = selected.id
-            }
-            map.invalidate()
-        },
-        onRelease = { it.onDetach() },
-    )
-}
-
-// ---------- Road status ticker (TEMPORARY demo data; later fed by LoRa updates) ----------
-
-@Composable
-private fun RouteTicker() {
-    val items = listOf(
-        Triple("Marcos Hwy", "Optimal", SafeGreen),
-        Triple("Nagulian Rd", "Passable", AmberAccent),
-        Triple("Kennon Rd", "Blocked", ResqRed),
-    )
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        items.forEach { (road, status, color) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(color)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "$road: ",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = InkDark,
-                )
-                Text(
-                    text = status,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = color,
-                )
-            }
-        }
-    }
-}
-
-// ---------- Shelter cards ----------
-
-@Composable
-private fun ShelterDetailCard(
+private fun ShelterCard(
     shelter: Shelter,
-    onNavigate: () -> Unit,
-    onDesk: () -> Unit,
+    onDirections: () -> Unit,
+    onContact: () -> Unit,
     onShare: () -> Unit,
 ) {
-    val percent = shelter.percent
-    val barColor = when {
-        percent >= 80 -> ResqRed
-        percent >= 50 -> AmberAccent
-        else -> SafeGreen
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(24.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, BorderGray),
+        border = BorderStroke(
+            if (shelter.primary) 1.5.dp else 1.dp,
+            if (shelter.primary) ResqRed.copy(alpha = 0.5f) else BorderGray,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (shelter.primary) 4.dp else 0.dp),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -714,15 +520,29 @@ private fun ShelterDetailCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = "OPEN NOW",
-                    fontSize = 10.sp,
+                    fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
                     color = SafeGreen,
                     modifier = Modifier
                         .clip(CircleShape)
                         .background(SafeGreenTint)
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
+                if (shelter.primary) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "PRIMARY HUB",
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        color = InkMuted,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(Color(0xFFE9ECF1))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = "ID: ${shelter.id}",
@@ -731,18 +551,20 @@ private fun ShelterDetailCard(
                     color = InkMuted,
                     modifier = Modifier.weight(1f),
                 )
-                IconButton(onClick = onShare) {
-                    Icon(
-                        imageVector = Icons.Filled.Share,
-                        contentDescription = "Share",
-                        tint = InkMuted,
-                    )
+                if (shelter.primary) {
+                    IconButton(onClick = onShare) {
+                        Icon(
+                            imageVector = Icons.Filled.Share,
+                            contentDescription = "Share",
+                            tint = InkMuted,
+                        )
+                    }
                 }
             }
 
             Text(
                 text = shelter.name,
-                fontSize = 22.sp,
+                fontSize = if (shelter.primary) 20.sp else 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = InkDark,
             )
@@ -756,76 +578,19 @@ private fun ShelterDetailCard(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "${shelter.distanceKm} km away via ${shelter.via}",
+                    text = "${formatDistance(shelter.distanceM)} away • ${shelter.via}",
                     fontSize = 12.sp,
                     color = InkMuted,
                     modifier = Modifier.weight(1f),
                 )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "${shelter.walkMin} min walk / ${shelter.driveMin} min drive",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = InkDark,
-                )
-            }
-
-            // Capacity
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(ScreenBg)
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                if (shelter.primary) {
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "CAPACITY STATUS",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = InkMuted,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        text = "${shelter.used} / ${shelter.total} Bed Spaces ($percent% Full)",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        text = "${shelter.walkMin} min walk / ${shelter.driveMin} min drive",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = InkDark,
                     )
-                }
-                LinearProgressIndicator(
-                    progress = { shelter.used.toFloat() / shelter.total },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(CircleShape),
-                    color = barColor,
-                    trackColor = BorderGray,
-                )
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Fast intake line: ${shelter.intake}",
-                        fontSize = 11.sp,
-                        color = InkMuted,
-                        modifier = Modifier.weight(1f),
-                    )
-                    if (shelter.floodSafe) {
-                        Icon(
-                            imageVector = Icons.Filled.CheckCircle,
-                            contentDescription = null,
-                            tint = SafeGreen,
-                            modifier = Modifier.size(14.dp),
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = "Safe from flood zone",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = SafeGreen,
-                        )
-                    }
                 }
             }
 
@@ -839,30 +604,34 @@ private fun ShelterDetailCard(
                 }
             }
 
-            // Actions
+            // Actions (directions open the phone's maps app)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    onClick = onNavigate,
+                    onClick = onDirections,
                     modifier = Modifier
                         .weight(1f)
-                        .height(52.dp),
+                        .height(50.dp),
                     shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ResqRed),
+                    colors = if (shelter.primary) {
+                        ButtonDefaults.buttonColors(containerColor = ResqRed)
+                    } else {
+                        ButtonDefaults.buttonColors(containerColor = BlueTint, contentColor = ResqRed)
+                    },
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Navigation,
+                        imageVector = Icons.Filled.Directions,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Start Navigation", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Get Directions", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 OutlinedButton(
-                    onClick = onDesk,
-                    modifier = Modifier.height(52.dp),
+                    onClick = onContact,
+                    modifier = Modifier.height(50.dp),
                     shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, BorderGray),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = InkDark),
@@ -873,7 +642,11 @@ private fun ShelterDetailCard(
                         modifier = Modifier.size(16.dp),
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Desk", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = if (shelter.primary) "Desk" else "Contact",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
                 }
             }
         }
@@ -904,78 +677,5 @@ private fun AmenityChip(amenity: Amenity, modifier: Modifier = Modifier) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-@Composable
-private fun ShelterRow(shelter: Shelter, onView: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, BorderGray),
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(ScreenBg),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Home,
-                    contentDescription = null,
-                    tint = InkMuted,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = shelter.name,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = InkDark,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "${shelter.percent}% Cap",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = InkMuted,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(ScreenBg)
-                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                    )
-                }
-                Text(
-                    text = "${shelter.distanceKm} km away \u2022 ${shelter.via}",
-                    fontSize = 11.sp,
-                    color = InkMuted,
-                )
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            OutlinedButton(
-                onClick = onView,
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, BorderGray),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = InkDark),
-            ) {
-                Text("View", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-        }
     }
 }

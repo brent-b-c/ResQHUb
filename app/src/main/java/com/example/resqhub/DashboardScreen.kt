@@ -1,13 +1,13 @@
 package com.example.resqhub
 
 import android.content.Intent
-import android.graphics.DashPathEffect
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -28,19 +28,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
+import androidx.compose.material.icons.filled.Apartment
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalPolice
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -66,24 +68,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory
-import org.osmdroid.util.GeoPoint
-import org.osmdroid.views.MapView
-import org.osmdroid.views.overlay.Marker
-import org.osmdroid.views.overlay.Polyline
-import androidx.core.content.ContextCompat
 import java.util.Locale
 
 private val ResqRed = Color(0xFFA81F1B)
@@ -97,7 +93,6 @@ private val SafeGreenTint = Color(0xFFE9F8F0)
 private val BorderGray = Color(0xFFE5E7EB)
 private val BlueAccent = Color(0xFF4F46E5)
 private val BlueTint = Color(0xFFEEF0FF)
-private val OrangeAccent = Color(0xFFF59E0B)
 
 @Composable
 fun DashboardScreen(onLogout: () -> Unit) {
@@ -106,12 +101,11 @@ fun DashboardScreen(onLogout: () -> Unit) {
     var dispatch by remember { mutableStateOf<ReportSummary?>(null) }
 
     val userLocation by rememberUserLocation()
-    val userPoint = userLocation?.let { GeoPoint(it.latitude, it.longitude) }
 
-    // TEMPORARY: replace with the real SOS (BLE -> LoRa node) later.
+    // TEMPORARY: replace with the real SOS (saved to the database / sent over LoRa) later.
     val triggerSos = {
         val where = userLocation?.let {
-            "%.5f, %.5f (\u00B1%dm)".format(Locale.US, it.latitude, it.longitude, it.accuracyM.toInt())
+            "%.5f, %.5f (±%dm)".format(Locale.US, it.latitude, it.longitude, it.accuracyM.toInt())
         } ?: "location unknown"
         Toast.makeText(context, "SOS triggered at $where (demo only)", Toast.LENGTH_LONG).show()
     }
@@ -131,17 +125,10 @@ fun DashboardScreen(onLogout: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                DashboardHeader(onSos = triggerSos, onProfile = onLogout)
-                StatusCard()
+                DashboardHeader(onProfile = onLogout)
                 SosHoldCard(onSos = triggerSos)
                 HotlinesSection()
-                SafeHavensCard(userPoint = userPoint)
-                AlertCard(
-                    onSafe = {
-                        // TEMPORARY: later this sends an "I am Safe" packet over LoRa.
-                        Toast.makeText(context, "Marked safe (demo only)", Toast.LENGTH_SHORT).show()
-                    }
-                )
+                BarangayMapCard()
             }
 
             1 -> SafeMapScreen(
@@ -173,6 +160,13 @@ fun DashboardScreen(onLogout: () -> Unit) {
                 }
             }
 
+            3 -> AnnouncementsScreen(
+                modifier = Modifier.padding(innerPadding),
+                onProfile = onLogout,
+                onReport = { selectedTab = 2 },
+                onMapView = { selectedTab = 1 },
+            )
+
             else -> Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -185,16 +179,18 @@ fun DashboardScreen(onLogout: () -> Unit) {
     }
 }
 
+// ---------- Header ----------
+
 @Composable
-private fun DashboardHeader(onSos: () -> Unit, onProfile: () -> Unit) {
+private fun DashboardHeader(onProfile: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(14.dp))
+                .size(40.dp)
+                .clip(RoundedCornerShape(12.dp))
                 .background(Brush.linearGradient(listOf(ResqRedLight, ResqRed))),
             contentAlignment = Alignment.Center,
         ) {
@@ -202,55 +198,19 @@ private fun DashboardHeader(onSos: () -> Unit, onProfile: () -> Unit) {
                 imageVector = Icons.Filled.Shield,
                 contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(24.dp),
+                modifier = Modifier.size(22.dp),
             )
         }
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(10.dp))
 
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = "resQHub",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = InkDark,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .clip(CircleShape)
-                        .background(SafeGreen)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "Brgy. Military Cut-off \u2022 LoRa Mesh Relay (Baguio)",
-                    fontSize = 11.sp,
-                    color = InkMuted,
-                    maxLines = 2,
-                )
-            }
-        }
-
-        Spacer(Modifier.width(8.dp))
-
-        Box(
-            modifier = Modifier
-                .clip(CircleShape)
-                .background(ResqRed)
-                .clickable { onSos() }
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "SOS",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-            )
-        }
-
-        Spacer(Modifier.width(4.dp))
+        Text(
+            text = "resQHub",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = InkDark,
+            modifier = Modifier.weight(1f),
+        )
 
         // TEMPORARY: the profile button logs out until we build a profile screen.
         IconButton(onClick = onProfile) {
@@ -262,6 +222,8 @@ private fun DashboardHeader(onSos: () -> Unit, onProfile: () -> Unit) {
         }
     }
 }
+
+// ---------- Status ----------
 
 @Composable
 private fun StatusCard() {
@@ -300,7 +262,7 @@ private fun StatusCard() {
                     color = InkDark,
                 )
                 Text(
-                    text = "Brgy. Military Cut-off, Baguio City \u2022 LoRa Gateway BGO-MC01 Active",
+                    text = "Barangay Military Cut-off, Baguio City",
                     fontSize = 12.sp,
                     color = InkMuted,
                 )
@@ -332,6 +294,8 @@ private fun StatusCard() {
         }
     }
 }
+
+// ---------- SOS (hold 3 seconds) ----------
 
 @Composable
 private fun SosHoldCard(onSos: () -> Unit) {
@@ -387,12 +351,27 @@ private fun SosHoldCard(onSos: () -> Unit) {
                 Spacer(Modifier.width(16.dp))
 
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "HOLD FOR SOS",
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "HOLD FOR SOS",
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color.White,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "LIVE BEACON",
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color.White.copy(alpha = 0.2f))
+                                .padding(horizontal = 6.dp, vertical = 3.dp),
+                        )
+                    }
                     Text(
                         text = "Dispatches 911 & high-precision GPS coordinates",
                         fontSize = 12.sp,
@@ -462,10 +441,10 @@ private fun HotlinesSection() {
     val context = LocalContext.current
 
     val hotlines = listOf(
-        Hotline("Mil. Cut-off BEI", "Brgy Emergency Desk", "", Icons.Filled.Shield, SafeGreen, SafeGreenTint),
-        Hotline("Baguio CDRRM", "Disaster Response", "", Icons.Filled.Shield, BlueAccent, BlueTint),
-        Hotline("911 Emergency", "National Dispatch", "911", Icons.Filled.MedicalServices, ResqRed, ResqRedTint),
-        Hotline("BCPO Station 5", "Mil. Cut-off Police", "", Icons.Filled.LocalPolice, BlueAccent, BlueTint),
+        Hotline("911 Emergency", "National Emergency Dispatch", "911", Icons.Filled.MedicalServices, ResqRed, ResqRedTint),
+        Hotline("Baguio CDRRMO", "Disaster Response & Rescue", "", Icons.Filled.Shield, BlueAccent, BlueTint),
+        Hotline("Baguio Police (BCPO)", "Hotline, Patrol & Assistance", "", Icons.Filled.LocalPolice, BlueAccent, BlueTint),
+        Hotline("Barangay Military Cut-off", "BERT & Brgy Hall Hotline", "", Icons.Filled.Apartment, SafeGreen, SafeGreenTint),
     )
 
     fun call(hotline: Hotline) {
@@ -478,7 +457,7 @@ private fun HotlinesSection() {
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -489,7 +468,7 @@ private fun HotlinesSection() {
             Spacer(Modifier.width(8.dp))
             Text(
                 text = "1-Tap Emergency Hotlines",
-                fontSize = 17.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = InkDark,
                 modifier = Modifier.weight(1f),
@@ -505,25 +484,17 @@ private fun HotlinesSection() {
             )
         }
 
-        hotlines.chunked(2).forEach { rowItems ->
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                rowItems.forEach { hotline ->
-                    HotlineCard(
-                        hotline = hotline,
-                        modifier = Modifier.weight(1f),
-                        onClick = { call(hotline) },
-                    )
-                }
-            }
+        hotlines.forEach { hotline ->
+            HotlineRow(hotline = hotline, onClick = { call(hotline) })
         }
     }
 }
 
 @Composable
-private fun HotlineCard(hotline: Hotline, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun HotlineRow(hotline: Hotline, onClick: () -> Unit) {
     Card(
         onClick = onClick,
-        modifier = modifier,
+        modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         border = BorderStroke(1.dp, BorderGray),
@@ -546,7 +517,9 @@ private fun HotlineCard(hotline: Hotline, modifier: Modifier = Modifier, onClick
                     modifier = Modifier.size(22.dp),
                 )
             }
-            Spacer(Modifier.width(10.dp))
+
+            Spacer(Modifier.width(12.dp))
+
             Column(Modifier.weight(1f)) {
                 Text(
                     text = hotline.name,
@@ -560,18 +533,42 @@ private fun HotlineCard(hotline: Hotline, modifier: Modifier = Modifier, onClick
                     text = hotline.subtitle,
                     fontSize = 11.sp,
                     color = InkMuted,
-                    maxLines = 2,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Spacer(Modifier.width(8.dp))
+
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(hotline.bg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Call,
+                    contentDescription = "Call ${hotline.name}",
+                    tint = hotline.tint,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
     }
 }
 
-// ---------- Safe havens ----------
+// ---------- Barangay map (a picture, not a live map) ----------
 
 @Composable
-private fun SafeHavensCard(userPoint: GeoPoint?) {
+private fun BarangayMapCard() {
     val context = LocalContext.current
+
+    // Looks for a picture named barangay_map in res/drawable (png or jpg).
+    // If you haven't added it yet, a placeholder is shown instead of crashing.
+    val mapRes = remember {
+        context.resources.getIdentifier("barangay_map", "drawable", context.packageName)
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -582,14 +579,14 @@ private fun SafeHavensCard(userPoint: GeoPoint?) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Filled.Explore,
+                    imageVector = Icons.Filled.Map,
                     contentDescription = null,
                     tint = ResqRed,
                     modifier = Modifier.size(20.dp),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "Safe Havens & Route",
+                    text = "Map Military Cut-off",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold,
                     color = InkDark,
@@ -601,40 +598,33 @@ private fun SafeHavensCard(userPoint: GeoPoint?) {
                         .clip(CircleShape)
                         .background(SafeGreen)
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(text = "Radius 5 mi", fontSize = 12.sp, color = InkMuted)
             }
 
-            // Map preview (static in the card; the full interactive map goes in the Safe Map tab)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(160.dp)
-                    .clip(RoundedCornerShape(16.dp)),
-            ) {
-                SafeHavensMap(userPoint = userPoint, modifier = Modifier.fillMaxSize())
-
-                // Transparent layer on top: stops the map from fighting with page scrolling
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .clickable {
-                            Toast.makeText(context, "Full map coming in the Safe Map tab", Toast.LENGTH_SHORT).show()
-                        }
-                )
-
-                Text(
-                    text = "Clear Route \u2022 4 min walk",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = InkDark,
+            if (mapRes != 0) {
+                Image(
+                    painter = painterResource(id = mapRes),
+                    contentDescription = "Map of Barangay Military Cut-off",
                     modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(10.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.FillWidth,
                 )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(ScreenBg)
+                        .padding(16.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Add your barangay map picture as barangay_map.png in res/drawable",
+                        fontSize = 12.sp,
+                        color = InkMuted,
+                    )
+                }
             }
 
             Row(
@@ -669,11 +659,6 @@ private fun SafeHavensCard(userPoint: GeoPoint?) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        text = "Open \u2022 Capacity 42%",
-                        fontSize = 11.sp,
-                        color = InkMuted,
-                    )
                 }
                 Spacer(Modifier.width(8.dp))
                 Button(
@@ -701,87 +686,6 @@ private fun SafeHavensCard(userPoint: GeoPoint?) {
     }
 }
 
-// ---------- Alert card ----------
-
-@Composable
-private fun AlertCard(onSafe: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        border = BorderStroke(1.dp, BorderGray),
-    ) {
-        Column {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .background(Brush.horizontalGradient(listOf(ResqRed, OrangeAccent)))
-            )
-
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "SLOPE TELEMETRY ALERT",
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = ResqRed,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(ResqRedTint)
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "Mil. Cut-off Sector",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = InkDark,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Icon(
-                        imageVector = Icons.Outlined.Schedule,
-                        contentDescription = null,
-                        tint = InkMuted,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(text = "10m ago", fontSize = 11.sp, color = InkMuted)
-                }
-
-                // TEMPORARY text. Later this comes from LoRa sensor nodes via the gateway.
-                Text(
-                    text = "Soil saturation telemetry along Military Cut-off Rd and South Drive slope " +
-                            "is at Warning Level 2. Passable with extreme caution. Evacuation center at " +
-                            "Military Cut-off Gym is fully operational.",
-                    fontSize = 13.sp,
-                    color = InkDark,
-                )
-
-                Button(
-                    onClick = onSafe,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = ResqRed),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.CheckCircle,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("I am Safe", fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
 // ---------- Bottom navigation ----------
 
 @Composable
@@ -790,7 +694,7 @@ private fun DashboardBottomBar(selected: Int, onSelect: (Int) -> Unit) {
         "Alerts" to Icons.Filled.Warning,
         "Safe Map" to Icons.Filled.Explore,
         "Report" to Icons.Filled.NotificationsActive,
-        "Evacuate" to Icons.AutoMirrored.Filled.DirectionsWalk,
+        "Announcements" to Icons.Filled.Campaign,
     )
 
     NavigationBar(containerColor = Color.White) {
@@ -799,7 +703,7 @@ private fun DashboardBottomBar(selected: Int, onSelect: (Int) -> Unit) {
                 selected = selected == index,
                 onClick = { onSelect(index) },
                 icon = { Icon(imageVector = icon, contentDescription = label) },
-                label = { Text(label, fontSize = 11.sp) },
+                label = { Text(label, fontSize = 11.sp, maxLines = 1) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = ResqRed,
                     selectedTextColor = ResqRed,
@@ -810,71 +714,4 @@ private fun DashboardBottomBar(selected: Int, onSelect: (Int) -> Unit) {
             )
         }
     }
-}
-
-// ---------- Map (osmdroid) ----------
-
-// TODO: replace with the user's real GPS location and the real evacuation center coordinates
-private val DemoUserPoint = GeoPoint(16.4015, 120.5935)
-private val DemoHavenPoint = GeoPoint(16.4045, 120.5985)
-
-@Composable
-private fun SafeHavensMap(userPoint: GeoPoint?, modifier: Modifier = Modifier) {
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            configureOsmdroid(ctx)
-            MapView(ctx).apply {
-                setTileSource(TileSourceFactory.MAPNIK)
-                setMultiTouchControls(true)
-                controller.setZoom(17.0)
-                onResume()
-            }
-        },
-        update = { map ->
-            val user = userPoint ?: DemoUserPoint
-            // If the phone is far from Baguio (for example an emulator set elsewhere),
-            // just show the shelter instead of an empty, zoomed-out map.
-            val farAway = user.distanceToAsDouble(DemoHavenPoint) > 20_000.0
-
-            map.overlays.clear()
-
-            if (!farAway) {
-                map.overlays.add(
-                    Polyline().apply {
-                        setPoints(listOf(user, DemoHavenPoint))
-                        outlinePaint.color = SafeGreen.toArgb()
-                        outlinePaint.strokeWidth = 8f
-                        outlinePaint.pathEffect = DashPathEffect(floatArrayOf(20f, 14f), 0f)
-                    }
-                )
-                map.overlays.add(
-                    Marker(map).apply {
-                        position = user
-                        title = "You are here"
-                        icon = ContextCompat.getDrawable(map.context, android.R.drawable.ic_menu_mylocation)
-                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_CENTER)
-                    }
-                )
-            }
-
-            map.overlays.add(
-                Marker(map).apply {
-                    position = DemoHavenPoint
-                    title = "Military Cut-off Gym"
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                }
-            )
-
-            map.controller.setCenter(
-                if (farAway) DemoHavenPoint
-                else GeoPoint(
-                    (user.latitude + DemoHavenPoint.latitude) / 2,
-                    (user.longitude + DemoHavenPoint.longitude) / 2,
-                )
-            )
-            map.invalidate()
-        },
-        onRelease = { it.onDetach() },
-    )
 }
