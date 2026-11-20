@@ -45,7 +45,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,6 +78,7 @@ private const val CdrrmoNumber = ""
 
 /** What the Report screen hands over when the user submits. */
 data class ReportSummary(
+    val code: String,            // e.g. BGO-MC-1000, created by the database
     val categoryLabel: String,
     val severity: String,
     val people: Int,
@@ -97,9 +97,6 @@ fun DispatchScreen(
 ) {
     val context = LocalContext.current
 
-    // TEMPORARY: later this ID comes from the database row of the submitted report.
-    val incidentNumber = rememberSaveable { (1000..9999).random() }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -111,9 +108,9 @@ fun DispatchScreen(
         DispatchHeader(onProfile = onProfile)
 
         DispatchSummaryCard(
-            incidentId = "#BGO-MC-$incidentNumber",
+            incidentId = "#${summary.code}",
             title = "Brgy. Military Cut-off • ${summary.categoryLabel}",
-            subtitle = "${summary.severity} Urgency • ${summary.people} " +
+            subtitle = "${summary.severity} • ${summary.people} " +
                     (if (summary.people == 1) "Citizen" else "Citizens") + " Requiring Extraction",
         )
 

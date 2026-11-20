@@ -88,7 +88,7 @@ private val BlueTint = Color(0xFFEEF0FF)
 private val AmberAccent = Color(0xFFF59E0B)
 private val AmberTint = Color(0xFFFEF6E4)
 
-// ---------- Sample data (TEMPORARY: replace with the database later) ----------
+// ---------- Data (loaded from the database) ----------
 
 private data class Amenity(
     val label: String,
@@ -101,65 +101,30 @@ private data class Shelter(
     val id: String,
     val name: String,
     val via: String,
-    val distanceM: Int,
-    val walkMin: Int,
-    val driveMin: Int,
+    val distanceM: Int?,        // null when the phone has no GPS fix yet
+    val walkMin: Int?,
+    val driveMin: Int?,
     val primary: Boolean,
+    val open: Boolean,
     val amenities: List<Amenity>,
     val lat: Double,
     val lon: Double,
     val phone: String,
 )
 
-private val MedicStation = Amenity("Medic Station", Icons.Filled.MedicalServices, SafeGreen, SafeGreenTint)
-private val GeneratorBackup = Amenity("Generator Backup", Icons.Filled.Bolt, AmberAccent, AmberTint)
-private val PotableWater = Amenity("Potable Water Fill", Icons.Filled.WaterDrop, BlueAccent, BlueTint)
-private val AdaAccess = Amenity("ADA Compliant Access", Icons.Filled.Accessible, BlueAccent, BlueTint)
-private val ChargingPoint = Amenity("Charging Point", Icons.Filled.BatteryChargingFull, AmberAccent, AmberTint)
-private val FamilyTents = Amenity("Family Tents", Icons.Filled.Groups, SafeGreen, SafeGreenTint)
-
-// TODO: replace coordinates, distances and phone numbers with real data
-private val SampleShelters = listOf(
-    Shelter(
-        id = "BGO-S01",
-        name = "Baguio Convention Center",
-        via = "Gov. Pack Rd",
-        distanceM = 1200,
-        walkMin = 6,
-        driveMin = 3,
-        primary = true,
-        amenities = listOf(MedicStation, GeneratorBackup, PotableWater, AdaAccess),
-        lat = 16.4115,
-        lon = 120.5930,
-        phone = "",
-    ),
-    Shelter(
-        id = "BGO-S03",
-        name = "Military Cut-off Barangay Hall & Court",
-        via = "Military Cut-off Rd",
-        distanceM = 650,
-        walkMin = 8,
-        driveMin = 3,
-        primary = false,
-        amenities = listOf(ChargingPoint),
-        lat = 16.4048,
-        lon = 120.5990,
-        phone = "",
-    ),
-    Shelter(
-        id = "BGO-S05",
-        name = "PFVR Gym & Youth Center",
-        via = "Upper Session Rd",
-        distanceM = 1800,
-        walkMin = 22,
-        driveMin = 6,
-        primary = false,
-        amenities = listOf(FamilyTents),
-        lat = 16.4080,
-        lon = 120.6010,
-        phone = "",
-    ),
-)
+/** Picks an icon and colour for an amenity name that came from the database. */
+private fun amenityFor(label: String): Amenity = when {
+    label.contains("medic", true) -> Amenity(label, Icons.Filled.MedicalServices, SafeGreen, SafeGreenTint)
+    label.contains("generator", true) || label.contains("power", true) ->
+        Amenity(label, Icons.Filled.Bolt, AmberAccent, AmberTint)
+    label.contains("water", true) -> Amenity(label, Icons.Filled.WaterDrop, BlueAccent, BlueTint)
+    label.contains("ada", true) || label.contains("access", true) ->
+        Amenity(label, Icons.Filled.Accessible, BlueAccent, BlueTint)
+    label.contains("charg", true) -> Amenity(label, Icons.Filled.BatteryChargingFull, AmberAccent, AmberTint)
+    label.contains("tent", true) || label.contains("family", true) ->
+        Amenity(label, Icons.Filled.Groups, SafeGreen, SafeGreenTint)
+    else -> Amenity(label, Icons.Filled.Home, InkMuted, Color(0xFFE9ECF1))
+}
 
 private fun metersBetween(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Int {
     val result = FloatArray(1)
@@ -175,6 +140,10 @@ private fun formatDistance(meters: Int): String =
 @Composable
 fun SafeMapScreen(
     modifier: Modifier = Modifier,
+    shelters: List<ShelterRow> = emptyList(),
+    isLoading: Boolean = false,
+    error: String? = null,
+    onRetry: () -> Unit = {},
     userLocation: UserLocation? = null,
     onSos: () -> Unit = {},       // not used on this screen right now
     onProfile: () -> Unit = {},
@@ -182,30 +151,32 @@ fun SafeMapScreen(
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
 
-    // With GPS (and a phone that is actually near Baguio): real distance and walk/drive time.
-    // Otherwise the sample values are shown. Primary hub first, then nearest.
-    val shelters = remember(userLocation) {
+    // With GPS: real distance and walk/drive time. Primary hub first, then nearest.
+    val items = remember(shelters, userLocation) {
         val loc = userLocation
-        val first = SampleShelters.first()
-        val nearBaguio = loc != null &&
-                metersBetween(loc.latitude, loc.longitude, first.lat, first.lon) < 20_000
-        val list = if (loc != null && nearBaguio) {
-            SampleShelters.map { s ->
-                val m = metersBetween(loc.latitude, loc.longitude, s.lat, s.lon)
-                s.copy(
-                    distanceM = m,
-                    walkMin = max(1, (m / 1000.0 / 5.0 * 60).roundToInt()),
-                    driveMin = max(1, (m / 1000.0 / 30.0 * 60).roundToInt()),
-                )
-            }
-        } else {
-            SampleShelters
-        }
-        list.sortedWith(compareByDescending<Shelter> { it.primary }.thenBy { it.distanceM })
+        shelters.map { row ->
+            val meters = loc?.let { metersBetween(it.latitude, it.longitude, row.lat, row.lon) }
+            Shelter(
+                id = row.id,
+                name = row.name,
+                via = row.via,
+                distanceM = meters,
+                walkMin = meters?.let { max(1, (it / 1000.0 / 5.0 * 60).roundToInt()) },
+                driveMin = meters?.let { max(1, (it / 1000.0 / 30.0 * 60).roundToInt()) },
+                primary = row.isPrimary,
+                open = row.isOpen,
+                amenities = row.amenities.map { amenityFor(it) },
+                lat = row.lat,
+                lon = row.lon,
+                phone = row.phone,
+            )
+        }.sortedWith(
+            compareByDescending<Shelter> { it.primary }.thenBy { it.distanceM ?: Int.MAX_VALUE }
+        )
     }
 
-    val visible = remember(query, shelters) {
-        shelters.filter {
+    val visible = remember(query, items) {
+        items.filter {
             query.isBlank() ||
                     it.name.contains(query, ignoreCase = true) ||
                     it.via.contains(query, ignoreCase = true)
@@ -257,7 +228,7 @@ fun SafeMapScreen(
         SafeMapHeader(onProfile = onProfile)
         LocationPill()
         ShelterSearchBar(query = query, onChange = { query = it })
-        FilterChipsRow(shelterCount = shelters.size, onComingSoon = ::comingSoon)
+        FilterChipsRow(shelterCount = items.size, onComingSoon = ::comingSoon)
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -298,11 +269,23 @@ fun SafeMapScreen(
         }
 
         if (visible.isEmpty()) {
-            Text(
-                text = "No shelters match your search.",
-                color = InkMuted,
-                fontSize = 13.sp,
-            )
+            val message = when {
+                isLoading && items.isEmpty() -> "Loading evacuation stations..."
+                error != null && items.isEmpty() -> "Could not load evacuation stations. $error"
+                items.isEmpty() -> "No evacuation stations have been added yet."
+                else -> "No shelters match your search."
+            }
+            Text(text = message, color = InkMuted, fontSize = 13.sp)
+            if (error != null && items.isEmpty() && !isLoading) {
+                OutlinedButton(
+                    onClick = onRetry,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, BorderGray),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = InkDark),
+                ) {
+                    Text("Try again", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
 
         visible.forEach { shelter ->
@@ -519,14 +502,14 @@ private fun ShelterCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "OPEN NOW",
+                    text = if (shelter.open) "OPEN NOW" else "CLOSED",
                     fontSize = 9.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.Bold,
-                    color = SafeGreen,
+                    color = if (shelter.open) SafeGreen else ResqRed,
                     modifier = Modifier
                         .clip(CircleShape)
-                        .background(SafeGreenTint)
+                        .background(if (shelter.open) SafeGreenTint else ResqRedTint)
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                 )
                 if (shelter.primary) {
@@ -578,12 +561,12 @@ private fun ShelterCard(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = "${formatDistance(shelter.distanceM)} away • ${shelter.via}",
+                    text = if (shelter.distanceM != null) "${formatDistance(shelter.distanceM)} away \u2022 ${shelter.via}" else shelter.via,
                     fontSize = 12.sp,
                     color = InkMuted,
                     modifier = Modifier.weight(1f),
                 )
-                if (shelter.primary) {
+                if (shelter.primary && shelter.walkMin != null && shelter.driveMin != null) {
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "${shelter.walkMin} min walk / ${shelter.driveMin} min drive",

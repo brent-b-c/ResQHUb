@@ -56,6 +56,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -99,6 +101,17 @@ fun DashboardScreen(onLogout: () -> Unit) {
     val context = LocalContext.current
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dispatch by remember { mutableStateOf<ReportSummary?>(null) }
+    val reportViewModel: ReportViewModel = viewModel()
+    val contentViewModel: ContentViewModel = viewModel()
+
+    // Refresh the shared lists whenever the user opens a tab that shows them.
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 2) contentViewModel.refresh()
+    }
+    // If the login has expired, go back to the login screen.
+    LaunchedEffect(contentViewModel.authExpired) {
+        if (contentViewModel.authExpired) onLogout()
+    }
 
     val userLocation by rememberUserLocation()
 
@@ -127,12 +140,19 @@ fun DashboardScreen(onLogout: () -> Unit) {
             ) {
                 DashboardHeader(onProfile = onLogout)
                 SosHoldCard(onSos = triggerSos)
-                HotlinesSection()
+                HotlinesSection(
+                    hotlines = contentViewModel.hotlines,
+                    error = contentViewModel.error,
+                )
                 BarangayMapCard()
             }
 
             1 -> SafeMapScreen(
                 modifier = Modifier.padding(innerPadding),
+                shelters = contentViewModel.shelters,
+                isLoading = contentViewModel.isLoading,
+                error = contentViewModel.error,
+                onRetry = contentViewModel::refresh,
                 userLocation = userLocation,
                 onSos = triggerSos,
                 onProfile = onLogout,
@@ -155,13 +175,28 @@ fun DashboardScreen(onLogout: () -> Unit) {
                         userLocation = userLocation,
                         onSos = triggerSos,
                         onProfile = onLogout,
-                        onSubmitted = { dispatch = it },
+                        isSubmitting = reportViewModel.isSubmitting,
+                        onSubmit = { draft ->
+                            reportViewModel.submit(
+                                draft = draft,
+                                onSuccess = { dispatch = it },
+                                onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() },
+                                onAuthExpired = {
+                                    Toast.makeText(context, "Please log in again.", Toast.LENGTH_LONG).show()
+                                    onLogout()
+                                },
+                            )
+                        },
                     )
                 }
             }
 
             3 -> AnnouncementsScreen(
                 modifier = Modifier.padding(innerPadding),
+                announcements = contentViewModel.announcements,
+                isLoading = contentViewModel.isLoading,
+                error = contentViewModel.error,
+                onRetry = contentViewModel::refresh,
                 onProfile = onLogout,
                 onReport = { selectedTab = 2 },
                 onMapView = { selectedTab = 1 },
@@ -219,78 +254,6 @@ private fun DashboardHeader(onProfile: () -> Unit) {
                 contentDescription = "Profile / Log out",
                 tint = InkDark,
             )
-        }
-    }
-}
-
-// ---------- Status ----------
-
-@Composable
-private fun StatusCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = SafeGreenTint),
-        border = BorderStroke(1.dp, SafeGreen.copy(alpha = 0.3f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(SafeGreen.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Shield,
-                    contentDescription = null,
-                    tint = SafeGreen,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-
-            Spacer(Modifier.width(14.dp))
-
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "Safe & Monitored",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = InkDark,
-                )
-                Text(
-                    text = "Barangay Military Cut-off, Baguio City",
-                    fontSize = 12.sp,
-                    color = InkMuted,
-                )
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            Row(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(Color.White)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.CheckCircle,
-                    contentDescription = null,
-                    tint = SafeGreen,
-                    modifier = Modifier.size(14.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(
-                    text = "Normal",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = SafeGreen,
-                )
-            }
         }
     }
 }
@@ -436,16 +399,24 @@ private data class Hotline(
     val bg: Color,
 )
 
+/** Picks an icon and colours for a hotline from its name. */
+private fun HotlineRow.toUi(): Hotline = when {
+    name.contains("911") -> Hotline(name, subtitle, number, Icons.Filled.MedicalServices, ResqRed, ResqRedTint)
+    name.contains("police", true) || name.contains("BCPO", true) ->
+        Hotline(name, subtitle, number, Icons.Filled.LocalPolice, BlueAccent, BlueTint)
+    name.contains("CDRRMO", true) || name.contains("DRRM", true) ->
+        Hotline(name, subtitle, number, Icons.Filled.Shield, BlueAccent, BlueTint)
+    else -> Hotline(name, subtitle, number, Icons.Filled.Apartment, SafeGreen, SafeGreenTint)
+}
+
 @Composable
-private fun HotlinesSection() {
+private fun HotlinesSection(hotlines: List<HotlineRow>, error: String?) {
     val context = LocalContext.current
 
-    val hotlines = listOf(
-        Hotline("911 Emergency", "National Emergency Dispatch", "911", Icons.Filled.MedicalServices, ResqRed, ResqRedTint),
-        Hotline("Baguio CDRRMO", "Disaster Response & Rescue", "", Icons.Filled.Shield, BlueAccent, BlueTint),
-        Hotline("Baguio Police (BCPO)", "Hotline, Patrol & Assistance", "", Icons.Filled.LocalPolice, BlueAccent, BlueTint),
-        Hotline("Barangay Military Cut-off", "BERT & Brgy Hall Hotline", "", Icons.Filled.Apartment, SafeGreen, SafeGreenTint),
-    )
+    // 911 must always be there, even with no internet or before the list has loaded.
+    val rows = hotlines.ifEmpty {
+        listOf(HotlineRow("911 Emergency", "National Emergency Dispatch", "911"))
+    }.map { it.toUi() }
 
     fun call(hotline: Hotline) {
         if (hotline.number.isBlank()) {
@@ -484,14 +455,22 @@ private fun HotlinesSection() {
             )
         }
 
-        hotlines.forEach { hotline ->
-            HotlineRow(hotline = hotline, onClick = { call(hotline) })
+        rows.forEach { hotline ->
+            HotlineItem(hotline = hotline, onClick = { call(hotline) })
+        }
+
+        if (hotlines.isEmpty() && error != null) {
+            Text(
+                text = "Could not load the full hotline list. 911 still works.",
+                fontSize = 11.sp,
+                color = InkMuted,
+            )
         }
     }
 }
 
 @Composable
-private fun HotlineRow(hotline: Hotline, onClick: () -> Unit) {
+private fun HotlineItem(hotline: Hotline, onClick: () -> Unit) {
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),

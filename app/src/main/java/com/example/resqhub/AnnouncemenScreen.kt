@@ -42,6 +42,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,6 +56,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 private val ResqRed = Color(0xFFA81F1B)
 private val ResqRedLight = Color(0xFFC8372D)
@@ -68,7 +72,7 @@ private val BorderGray = Color(0xFFE5E7EB)
 private val BlueAccent = Color(0xFF4F46E5)
 private val BlueTint = Color(0xFFEEF0FF)
 
-// ---------- Data (TEMPORARY sample data; later loaded from the database) ----------
+// ---------- Data (loaded from the database) ----------
 
 private enum class Tone { CRITICAL, GOOD, INFO }
 
@@ -86,72 +90,67 @@ private data class Announcement(
 
 private val Filters = listOf("All", "Barangay Official", "Weather & Hazards")
 
-private val CriticalAdvisory = Announcement(
-    id = "adv-1",
-    category = "Weather & Hazards",
-    tag = "CRITICAL ADVISORY • CDRRMO",
-    tone = Tone.CRITICAL,
-    timeAgo = "15m ago",
-    title = "Preemptive Advisory: Heavy Downpour Expected along Kennon & Military Cut-off",
-    body = "Continuous rainfall monitored over Baguio ridge. Drainage response crews deployed " +
-            "along Lower Military Cut-off Rd. Motorists are advised to avoid slippery bends and " +
-            "maintain safe braking distance.",
-    footer = "Baguio CDRRMO",
-    footerIcon = Icons.Filled.Shield,
-)
+private fun AnnouncementRow.toUi(): Announcement {
+    val toneValue = when (tone) {
+        "critical" -> Tone.CRITICAL
+        "good" -> Tone.GOOD
+        else -> Tone.INFO
+    }
+    return Announcement(
+        id = id,
+        category = if (category == "weather_hazards") "Weather & Hazards" else "Barangay Official",
+        tag = tag,
+        tone = toneValue,
+        timeAgo = timeAgo(createdAt),
+        title = title,
+        body = body,
+        footer = footer,
+        footerIcon = when (toneValue) {
+            Tone.CRITICAL -> Icons.Filled.Shield
+            Tone.GOOD -> Icons.Filled.CheckCircle
+            Tone.INFO -> Icons.Filled.Person
+        },
+    )
+}
 
-private val Bulletins = listOf(
-    Announcement(
-        id = "bul-1",
-        category = "Barangay Official",
-        tag = "ROAD PASSABLE",
-        tone = Tone.GOOD,
-        timeAgo = "45m ago",
-        title = "Military Cut-off Rd to Panagbenga Park Corridor Clear",
-        body = "Fallen tree branches and gravel cleared by barangay volunteer team at 2:30 PM. " +
-                "Normal vehicle traffic flow restored both lanes.",
-        footer = "Verified by Brgy. BERT Logistics Team",
-        footerIcon = Icons.Filled.CheckCircle,
-    ),
-    Announcement(
-        id = "bul-2",
-        category = "Barangay Official",
-        tag = "INSPECTION COMPLETED",
-        tone = Tone.INFO,
-        timeAgo = "2h ago",
-        title = "Retaining Wall & Drainage Inspection",
-        body = "On-site assessment conducted following resident alert. No structural cracks or soil " +
-                "movement observed on the slope barrier. Weepholes flowing smoothly.",
-        footer = "Kagawad M. Ramos • Civil Safety Desk",
-        footerIcon = Icons.Filled.Person,
-    ),
-    Announcement(
-        id = "bul-3",
-        category = "Barangay Official",
-        tag = "RESOLVED",
-        tone = Tone.GOOD,
-        timeAgo = "4h ago",
-        title = "BENECO Power Line Check",
-        body = "Minor secondary line sparking reported at noon has been cleared by BENECO emergency " +
-                "crew. Power distribution remains stable with zero planned brownouts.",
-        footer = "Coordinated via City Dispatch",
-        footerIcon = Icons.Filled.CheckCircle,
-    ),
-)
+/** "2026-11-20T08:14:22.123+00:00" -> "15m ago". The database sends UTC time. */
+private fun timeAgo(iso: String): String {
+    if (iso.length < 19) return ""
+    return try {
+        val format = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+        format.timeZone = TimeZone.getTimeZone("UTC")
+        val then = format.parse(iso.substring(0, 19))?.time ?: return ""
+        val minutes = ((System.currentTimeMillis() - then) / 60_000).coerceAtLeast(0)
+        when {
+            minutes < 1 -> "just now"
+            minutes < 60 -> "${minutes}m ago"
+            minutes < 60 * 24 -> "${minutes / 60}h ago"
+            else -> "${minutes / (60 * 24)}d ago"
+        }
+    } catch (e: Exception) {
+        ""
+    }
+}
 
 // ---------- Screen ----------
 
 @Composable
 fun AnnouncementsScreen(
     modifier: Modifier = Modifier,
+    announcements: List<AnnouncementRow> = emptyList(),
+    isLoading: Boolean = false,
+    error: String? = null,
+    onRetry: () -> Unit = {},
     onProfile: () -> Unit = {},
     onReport: () -> Unit = {},
     onMapView: () -> Unit = {},
 ) {
     var filter by rememberSaveable { mutableStateOf("All") }
 
-    val showCritical = filter == "All" || CriticalAdvisory.category == filter
-    val visibleBulletins = Bulletins.filter { filter == "All" || it.category == filter }
+    val items = remember(announcements) { announcements.map { it.toUi() } }
+    val matching = items.filter { filter == "All" || it.category == filter }
+    val critical = matching.filter { it.tone == Tone.CRITICAL }
+    val bulletins = matching.filter { it.tone != Tone.CRITICAL }
 
     Column(
         modifier = modifier
@@ -194,8 +193,8 @@ fun AnnouncementsScreen(
 
         FilterRow(selected = filter, onSelect = { filter = it })
 
-        if (showCritical) {
-            AnnouncementCard(item = CriticalAdvisory, onMapView = onMapView)
+        critical.forEach { advisory ->
+            AnnouncementCard(item = advisory, onMapView = onMapView)
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -207,7 +206,7 @@ fun AnnouncementsScreen(
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "${visibleBulletins.size} Active",
+                text = "${bulletins.size} Active",
                 fontSize = 10.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -219,15 +218,27 @@ fun AnnouncementsScreen(
             )
         }
 
-        if (visibleBulletins.isEmpty()) {
-            Text(
-                text = "No community bulletins in this category.",
-                fontSize = 13.sp,
-                color = InkMuted,
-            )
+        if (matching.isEmpty()) {
+            val message = when {
+                isLoading && items.isEmpty() -> "Loading announcements..."
+                error != null && items.isEmpty() -> "Could not load announcements. $error"
+                items.isEmpty() -> "No announcements yet. Updates from your barangay and responders will appear here."
+                else -> "No announcements in this category."
+            }
+            Text(text = message, fontSize = 13.sp, color = InkMuted)
+            if (error != null && items.isEmpty() && !isLoading) {
+                OutlinedButton(
+                    onClick = onRetry,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, BorderGray),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = InkDark),
+                ) {
+                    Text("Try again", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
 
-        visibleBulletins.forEach { bulletin ->
+        bulletins.forEach { bulletin ->
             AnnouncementCard(item = bulletin)
         }
 

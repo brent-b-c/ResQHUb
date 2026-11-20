@@ -46,6 +46,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -109,7 +110,7 @@ private val IncidentCategories = listOf(
     IncidentCategory("trapped", "Trapped", "Roof / Cut off", Icons.Filled.Accessibility, BlueAccent, BlueTint),
     IncidentCategory("fire", "Fire", "Smoke / Blaze", Icons.Filled.LocalFireDepartment, AmberAccent, AmberTint),
     IncidentCategory("medical", "Medical", "Injury / Trauma", Icons.Filled.MedicalServices, SafeGreen, SafeGreenTint),
-    IncidentCategory("road", "Road Blocked", "Landslide / Tree", Icons.Filled.Block, PurpleAccent, PurpleTint),
+    IncidentCategory("road_blocked", "Road Blocked", "Landslide / Tree", Icons.Filled.Block, PurpleAccent, PurpleTint),
     IncidentCategory("hazard", "Hazard", "Live wire / Gas leak", Icons.Filled.Bolt, ResqRed, ResqRedTint),
 )
 
@@ -123,7 +124,8 @@ fun ReportScreen(
     userLocation: UserLocation? = null,
     onSos: () -> Unit = {},
     onProfile: () -> Unit = {},
-    onSubmitted: (ReportSummary) -> Unit = {},
+    isSubmitting: Boolean = false,
+    onSubmit: (ReportDraft) -> Unit = {},
 ) {
     val context = LocalContext.current
 
@@ -151,13 +153,20 @@ fun ReportScreen(
             Toast.makeText(context, "Please select a category first", Toast.LENGTH_SHORT).show()
             return
         }
-        // TEMPORARY: later this is saved to the outbox and sent over LoRa (BLE -> node -> mesh).
-        onSubmitted(ReportSummary(category.label, SeverityLevels[severity], people))
-        categoryId = null
-        severity = 0
-        people = 1
-        vulnerable = false
-        details = ""
+        onSubmit(
+            ReportDraft(
+                category = category.id,
+                categoryLabel = category.label,
+                severity = SeverityLevels[severity].lowercase(),
+                severityLabel = SeverityLevels[severity],
+                people = people,
+                vulnerable = vulnerable,
+                details = details.trim(),
+                lat = userLocation?.latitude,
+                lon = userLocation?.longitude,
+                accuracyM = userLocation?.accuracyM,
+            )
+        )
     }
 
     Column(
@@ -277,22 +286,36 @@ fun ReportScreen(
             )
         }
 
-
         Button(
             onClick = { submit() },
+            enabled = !isSubmitting,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
             shape = RoundedCornerShape(18.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = ResqRed),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = ResqRed,
+                disabledContainerColor = ResqRed.copy(alpha = 0.6f),
+                disabledContentColor = Color.White,
+            ),
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.Send,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-            )
-            Spacer(Modifier.width(10.dp))
-            Text("Submit Emergency Report", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            if (isSubmitting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Sending...", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            } else {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Text("Submit Emergency Report", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
         }
 
         Row(
