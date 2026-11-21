@@ -370,6 +370,23 @@ private fun AlertCard(
                     color = InkDark,
                 )
 
+                // Photos sent by the resident (tap one to enlarge)
+                if (incident.photos.isNotEmpty()) {
+                    var viewing by rememberSaveable(incident.id) { mutableStateOf<String?>(null) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        incident.photos.forEach { path ->
+                            StorageImage(
+                                path = path,
+                                onClick = { viewing = path },
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(10.dp)),
+                            )
+                        }
+                    }
+                    viewing?.let { PhotoViewerDialog(path = it, onDismiss = { viewing = null }) }
+                }
+
                 // Location (tap to open in maps) and status
                 Row(
                     modifier = Modifier

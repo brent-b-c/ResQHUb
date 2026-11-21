@@ -1,6 +1,10 @@
 package com.example.resqhub
 
 import android.content.Intent
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.LaunchedEffect
+import android.location.Geocoder
 import android.location.Location
 import android.net.Uri
 import android.widget.Toast
@@ -149,7 +153,6 @@ fun SafeMapScreen(
     onProfile: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    var query by rememberSaveable { mutableStateOf("") }
 
     // With GPS: real distance and walk/drive time. Primary hub first, then nearest.
     val items = remember(shelters, userLocation) {
@@ -175,17 +178,7 @@ fun SafeMapScreen(
         )
     }
 
-    val visible = remember(query, items) {
-        items.filter {
-            query.isBlank() ||
-                    it.name.contains(query, ignoreCase = true) ||
-                    it.via.contains(query, ignoreCase = true)
-        }
-    }
-
-    fun comingSoon() {
-        Toast.makeText(context, "Coming soon", Toast.LENGTH_SHORT).show()
-    }
+    val visible = items
 
     fun openDirections(shelter: Shelter) {
         // Opens the phone's own maps app. Needs internet or the user's offline maps there.
@@ -226,9 +219,7 @@ fun SafeMapScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         SafeMapHeader(onProfile = onProfile)
-        LocationPill()
-        ShelterSearchBar(query = query, onChange = { query = it })
-        FilterChipsRow(shelterCount = items.size, onComingSoon = ::comingSoon)
+        LocationPill(userLocation = userLocation)
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -249,23 +240,6 @@ fun SafeMapScreen(
                     .background(ResqRedTint)
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
-            Spacer(Modifier.weight(1f))
-            Row(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(Color(0xFFE9ECF1))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.SwapVert,
-                    contentDescription = null,
-                    tint = InkMuted,
-                    modifier = Modifier.size(12.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(text = "Nearest first", fontSize = 10.sp, color = InkMuted)
-            }
         }
 
         if (visible.isEmpty()) {
@@ -273,7 +247,7 @@ fun SafeMapScreen(
                 isLoading && items.isEmpty() -> "Loading evacuation stations..."
                 error != null && items.isEmpty() -> "Could not load evacuation stations. $error"
                 items.isEmpty() -> "No evacuation stations have been added yet."
-                else -> "No shelters match your search."
+                else -> "No evacuation stations to show."
             }
             Text(text = message, color = InkMuted, fontSize = 13.sp)
             if (error != null && items.isEmpty() && !isLoading) {
@@ -344,8 +318,40 @@ private fun SafeMapHeader(onProfile: () -> Unit) {
     }
 }
 
+/** Shows where the phone is right now (street name if the phone can look it up, otherwise coordinates). */
 @Composable
-private fun LocationPill() {
+private fun LocationPill(userLocation: UserLocation?) {
+    val context = LocalContext.current
+
+    // Round to ~10 m so small GPS wobble does not trigger a new lookup every second.
+    val key = userLocation?.let { "%.4f,%.4f".format(java.util.Locale.US, it.latitude, it.longitude) }
+    var address by remember(key) { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(key) {
+        val loc = userLocation ?: return@LaunchedEffect
+        address = withContext(Dispatchers.IO) {
+            try {
+                @Suppress("DEPRECATION")
+                val list = Geocoder(context, java.util.Locale.getDefault())
+                    .getFromLocation(loc.latitude, loc.longitude, 1)
+                val a = list?.firstOrNull()
+                listOfNotNull(
+                    a?.thoroughfare,
+                    a?.subLocality,
+                    a?.locality,
+                ).distinct().joinToString(", ").ifBlank { null }
+            } catch (e: Exception) {
+                null   // no internet or no geocoder on this phone: fall back to coordinates
+            }
+        }
+    }
+
+    val text = when {
+        userLocation == null -> "Finding your location..."
+        address != null -> address.orEmpty()
+        else -> "%.5f, %.5f".format(java.util.Locale.US, userLocation.latitude, userLocation.longitude)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -358,12 +364,12 @@ private fun LocationPill() {
         Icon(
             imageVector = Icons.Filled.LocationOn,
             contentDescription = null,
-            tint = ResqRed,
+            tint = if (userLocation == null) InkMuted else ResqRed,
             modifier = Modifier.size(16.dp),
         )
         Spacer(Modifier.width(8.dp))
         Text(
-            text = "Military Cut-off Rd, Brgy. Military Cut-off, Baguio City",
+            text = text,
             fontSize = 12.sp,
             color = InkDark,
             maxLines = 1,
@@ -561,30 +567,11 @@ private fun ShelterCard(
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
-                    text = if (shelter.distanceM != null) "${formatDistance(shelter.distanceM)} away \u2022 ${shelter.via}" else shelter.via,
+                    text = shelter.via,
                     fontSize = 12.sp,
                     color = InkMuted,
                     modifier = Modifier.weight(1f),
                 )
-                if (shelter.primary && shelter.walkMin != null && shelter.driveMin != null) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "${shelter.walkMin} min walk / ${shelter.driveMin} min drive",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = InkDark,
-                    )
-                }
-            }
-
-            // Amenities, two per row
-            shelter.amenities.chunked(2).forEach { pair ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    pair.forEach { amenity ->
-                        AmenityChip(amenity = amenity, modifier = Modifier.weight(1f))
-                    }
-                    if (pair.size == 1) Spacer(Modifier.weight(1f))
-                }
             }
 
             // Actions (directions open the phone's maps app)

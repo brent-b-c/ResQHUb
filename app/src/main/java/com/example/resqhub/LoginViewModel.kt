@@ -13,6 +13,7 @@ data class LoginUiState(
     val isLoading: Boolean = false,
     val error: String? = null,
     val isLoggedIn: Boolean = false,
+    val info: String? = null,      // a friendly message (not an error)
 )
 
 class LoginViewModel(app: Application) : AndroidViewModel(app) {
@@ -48,6 +49,33 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                 LoginUiState(error = "Something went wrong. Please try again.")
             }
         }
+    }
+
+    /** Creates a citizen account and, if allowed, logs straight in. */
+    fun signUp(fullName: String, phone: String, email: String, password: String) {
+        if (uiState.isLoading) return
+
+        uiState = LoginUiState(isLoading = true)
+        viewModelScope.launch {
+            uiState = try {
+                if (Supabase.signUp(email, password, fullName, phone)) {
+                    LoginUiState(isLoggedIn = true)
+                } else {
+                    LoginUiState(info = "Account created. Please confirm your email, then log in.")
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException) {
+                LoginUiState(error = e.message ?: "Could not create your account.")
+            } catch (e: Exception) {
+                LoginUiState(error = "Something went wrong. Please try again.")
+            }
+        }
+    }
+
+    /** Clears an old error or message when the user switches between Log in and Sign up. */
+    fun clearMessages() {
+        if (!uiState.isLoading) uiState = LoginUiState()
     }
 
     fun logout() {

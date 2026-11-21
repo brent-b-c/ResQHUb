@@ -20,6 +20,8 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var authExpired by mutableStateOf(false)
         private set
+    var isSaving by mutableStateOf(false)
+        private set
 
     init {
         Supabase.init(app)
@@ -45,6 +47,28 @@ class ProfileViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: Exception) {
                 profile = profile?.copy(dutyStatus = before.dutyStatus)
                 onError("Could not change your status.")
+            }
+        }
+    }
+
+    /** Saves the edited name and phone. [onDone] runs only if it worked. */
+    fun saveProfile(fullName: String, phone: String, onDone: () -> Unit, onError: (String) -> Unit) {
+        if (isSaving) return
+        isSaving = true
+
+        viewModelScope.launch {
+            try {
+                Supabase.updateMyProfile(fullName, phone)
+                profile = profile?.copy(fullName = fullName.trim(), phone = phone.trim())
+                onDone()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: ApiException) {
+                if (e.isAuthError) authExpired = true else onError(e.message ?: "Could not save your profile.")
+            } catch (e: Exception) {
+                onError("Could not save your profile. Please try again.")
+            } finally {
+                isSaving = false
             }
         }
     }

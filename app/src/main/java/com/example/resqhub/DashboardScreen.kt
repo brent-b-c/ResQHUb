@@ -3,6 +3,7 @@ package com.example.resqhub
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -42,7 +43,10 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -102,9 +106,28 @@ private val BlueTint = Color(0xFFEEF0FF)
 fun CitizenApp(onLogout: () -> Unit) {
     val context = LocalContext.current
     val uid = Supabase.currentUserId().orEmpty()
+    val profileViewModel: ProfileViewModel = viewModel(key = "profile-$uid")
+    var showProfile by rememberSaveable { mutableStateOf(false) }
+    var showReports by rememberSaveable { mutableStateOf(false) }
+    val reportsViewModel: CommunityReportsViewModel = viewModel(key = "community-$uid")
+    LaunchedEffect(reportsViewModel.authExpired) {
+        if (reportsViewModel.authExpired) onLogout()
+    }
+    // Keep the list fresh while the app is open (faster while the list itself is showing).
+    LaunchedEffect(showReports) {
+        while (true) {
+            reportsViewModel.refresh()
+            delay(if (showReports) 8_000 else 20_000)
+        }
+    }
+    val openProfile: () -> Unit = { showProfile = true }
+    BackHandler(enabled = showProfile || showReports) {
+        if (showProfile) showProfile = false else showReports = false
+    }
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var dispatch by remember { mutableStateOf<ReportSummary?>(null) }
     var dispatchStatus by remember { mutableStateOf("submitted") }
+    val cancelScope = rememberCoroutineScope()
     val reportViewModel: ReportViewModel = viewModel(key = "report-$uid")
     val contentViewModel: ContentViewModel = viewModel(key = "content-$uid")
 
@@ -148,6 +171,39 @@ fun CitizenApp(onLogout: () -> Unit) {
             DashboardBottomBar(selected = selectedTab, onSelect = { selectedTab = it })
         },
     ) { innerPadding ->
+        if (showReports && !showProfile) {
+            CommunityReportsScreen(
+                modifier = Modifier.padding(innerPadding),
+                reports = reportsViewModel.reports,
+                isLoading = reportsViewModel.isLoading,
+                error = reportsViewModel.error,
+                onRetry = reportsViewModel::refresh,
+                onBack = { showReports = false },
+            )
+            return@Scaffold
+        }
+        if (showProfile) {
+            ProfileScreen(
+                modifier = Modifier.padding(innerPadding),
+                profile = profileViewModel.profile,
+                email = Supabase.currentEmail(),
+                isSaving = profileViewModel.isSaving,
+                onSave = { name, phone, onDone ->
+                    profileViewModel.saveProfile(
+                        fullName = name,
+                        phone = phone,
+                        onDone = {
+                            Toast.makeText(context, "Profile saved", Toast.LENGTH_SHORT).show()
+                            onDone()
+                        },
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() },
+                    )
+                },
+                onBack = { showProfile = false },
+                onLogout = onLogout,
+            )
+            return@Scaffold
+        }
         when (selectedTab) {
             0 -> Column(
                 modifier = Modifier
@@ -157,7 +213,11 @@ fun CitizenApp(onLogout: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                DashboardHeader(onProfile = onLogout)
+                DashboardHeader(
+                    activeReports = reportsViewModel.activeCount,
+                    onReports = { showReports = true },
+                    onProfile = openProfile,
+                )
                 SosHoldCard(onSos = triggerSos)
                 HotlinesSection(
                     hotlines = contentViewModel.hotlines,
@@ -174,7 +234,7 @@ fun CitizenApp(onLogout: () -> Unit) {
                 onRetry = contentViewModel::refresh,
                 userLocation = userLocation,
                 onSos = triggerSos,
-                onProfile = onLogout,
+                onProfile = openProfile,
             )
 
             2 -> {
@@ -186,15 +246,30 @@ fun CitizenApp(onLogout: () -> Unit) {
                         modifier = Modifier.padding(innerPadding),
                         userLocation = userLocation,
                         onSos = triggerSos,
-                        onProfile = onLogout,
+                        onProfile = openProfile,
                         onClose = { dispatch = null },
+                        onCancelReport = {
+                            cancelScope.launch {
+                                try {
+                                    Supabase.cancelMyIncident(active.id)
+                                    Toast.makeText(context, "Report cancelled", Toast.LENGTH_SHORT).show()
+                                    dispatch = null
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: ApiException) {
+                                    Toast.makeText(context, e.message ?: "Could not cancel the report.", Toast.LENGTH_LONG).show()
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Could not cancel the report. Please try again.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
                     )
                 } else {
                     ReportScreen(
                         modifier = Modifier.padding(innerPadding),
                         userLocation = userLocation,
                         onSos = triggerSos,
-                        onProfile = onLogout,
+                        onProfile = openProfile,
                         isSubmitting = reportViewModel.isSubmitting,
                         onSubmit = { draft ->
                             reportViewModel.submit(
@@ -217,7 +292,7 @@ fun CitizenApp(onLogout: () -> Unit) {
                 isLoading = contentViewModel.isLoading,
                 error = contentViewModel.error,
                 onRetry = contentViewModel::refresh,
-                onProfile = onLogout,
+                onProfile = openProfile,
                 onReport = { selectedTab = 2 },
                 onMapView = { selectedTab = 1 },
             )
@@ -237,7 +312,7 @@ fun CitizenApp(onLogout: () -> Unit) {
 // ---------- Header ----------
 
 @Composable
-private fun DashboardHeader(onProfile: () -> Unit) {
+private fun DashboardHeader(activeReports: Int, onReports: () -> Unit, onProfile: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -267,11 +342,27 @@ private fun DashboardHeader(onProfile: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
 
-        // TEMPORARY: the profile button logs out until we build a profile screen.
+        IconButton(onClick = onReports) {
+            BadgedBox(
+                badge = {
+                    if (activeReports > 0) {
+                        Badge(containerColor = ResqRed, contentColor = Color.White) {
+                            Text(if (activeReports > 9) "9+" else "$activeReports")
+                        }
+                    }
+                }
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Notifications,
+                    contentDescription = "Community reports",
+                    tint = InkDark,
+                )
+            }
+        }
         IconButton(onClick = onProfile) {
             Icon(
                 imageVector = Icons.Outlined.Person,
-                contentDescription = "Profile / Log out",
+                contentDescription = "Profile",
                 tint = InkDark,
             )
         }

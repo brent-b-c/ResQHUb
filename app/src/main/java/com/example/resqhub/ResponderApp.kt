@@ -1,6 +1,7 @@
 package com.example.resqhub
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -64,6 +66,9 @@ fun ResponderApp(
     val context = LocalContext.current
     val uid = Supabase.currentUserId().orEmpty()
     val viewModel: ResponderViewModel = viewModel(key = "responder-$uid")
+    val profileViewModel: ProfileViewModel = viewModel(key = "profile-$uid")
+    var showProfile by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = showProfile) { showProfile = false }
     val broadcastViewModel: BroadcastViewModel = viewModel(key = "broadcast-$uid")
 
     var tab by rememberSaveable { mutableIntStateOf(0) }
@@ -87,9 +92,31 @@ fun ResponderApp(
 
     Scaffold(
         containerColor = ScreenBg,
-        topBar = { ResponderTopBar(onProfile = onLogout) },
+        topBar = { ResponderTopBar(onProfile = { showProfile = true }) },
         bottomBar = { ResponderBottomBar(selected = tab, unread = unread, onSelect = { tab = it }) },
     ) { innerPadding ->
+        if (showProfile) {
+            ProfileScreen(
+                modifier = Modifier.padding(innerPadding),
+                profile = profileViewModel.profile ?: profile,
+                email = Supabase.currentEmail(),
+                isSaving = profileViewModel.isSaving,
+                onSave = { name, phone, onDone ->
+                    profileViewModel.saveProfile(
+                        fullName = name,
+                        phone = phone,
+                        onDone = {
+                            Toast.makeText(context, "Profile saved", Toast.LENGTH_SHORT).show()
+                            onDone()
+                        },
+                        onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() },
+                    )
+                },
+                onBack = { showProfile = false },
+                onLogout = onLogout,
+            )
+            return@Scaffold
+        }
         when (tab) {
             0 -> ResponderHomeScreen(
                 modifier = Modifier.padding(innerPadding),
@@ -206,7 +233,6 @@ private fun ResponderTopBar(onProfile: () -> Unit) {
 
         Spacer(Modifier.weight(1f))
 
-        // TEMPORARY: the profile button logs out until we build a profile screen.
         IconButton(
             onClick = onProfile,
             modifier = Modifier
@@ -216,7 +242,7 @@ private fun ResponderTopBar(onProfile: () -> Unit) {
         ) {
             Icon(
                 imageVector = Icons.Filled.Person,
-                contentDescription = "Profile / Log out",
+                contentDescription = "Profile",
                 tint = Color.White,
                 modifier = Modifier.size(18.dp),
             )

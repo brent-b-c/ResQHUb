@@ -3,6 +3,9 @@ package com.example.resqhub
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,6 +44,7 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SettingsInputAntenna
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,10 +59,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -134,14 +141,24 @@ fun ReportScreen(
     var people by rememberSaveable { mutableIntStateOf(1) }
     var vulnerable by rememberSaveable { mutableStateOf(false) }
     var details by rememberSaveable { mutableStateOf("") }
+    var photos by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var locationNote by rememberSaveable { mutableStateOf("") }   // landmark typed by the resident
+    var pinLat by rememberSaveable { mutableStateOf<Double?>(null) }  // spot chosen on the map
+    var pinLon by rememberSaveable { mutableStateOf<Double?>(null) }
+    var showLocationDialog by rememberSaveable { mutableStateOf(false) }
 
-    // Progress: category + location + severity + details
-    val done = listOf(
-        categoryId != null,
-        userLocation != null,
-        true,
-        details.isNotBlank(),
-    ).count { it }
+    // The system photo picker: no permission needed.
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(PhotoUtils.MaxPhotos)
+    ) { picked ->
+        photos = (photos + picked.map { it.toString() }).distinct().take(PhotoUtils.MaxPhotos)
+    }
+
+    // The spot the resident chose on the map, otherwise the phone's own location.
+    val chosenLat = pinLat
+    val chosenLon = pinLon
+    val reportLocation: UserLocation? =
+        if (chosenLat != null && chosenLon != null) UserLocation(chosenLat, chosenLon, 0f) else userLocation
 
     fun comingSoon(what: String) {
         Toast.makeText(context, "$what: coming soon", Toast.LENGTH_SHORT).show()
@@ -162,9 +179,11 @@ fun ReportScreen(
                 people = people,
                 vulnerable = vulnerable,
                 details = details.trim(),
-                lat = userLocation?.latitude,
-                lon = userLocation?.longitude,
-                accuracyM = userLocation?.accuracyM,
+                lat = reportLocation?.latitude,
+                lon = reportLocation?.longitude,
+                accuracyM = if (pinLat != null) null else userLocation?.accuracyM,
+                photoUris = photos,
+                address = locationNote.trim(),
             )
         )
     }
@@ -179,7 +198,6 @@ fun ReportScreen(
     ) {
         ReportHeader(onProfile = onProfile)
 
-        ProgressBlock(step = minOf(done + 1, 4), percent = done * 25)
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(
@@ -213,8 +231,13 @@ fun ReportScreen(
         }
 
         // 2. Location
-        SectionCard(number = 2, title = "Incident Location", badge = "Offline LoRa P2P Locked", badgeRed = false) {
-            LocationRow(userLocation = userLocation, onChange = { comingSoon("Change location") })
+        SectionCard(number = 2, title = "Incident Location") {
+            LocationRow(
+                userLocation = reportLocation,
+                note = locationNote,
+                pinned = pinLat != null,
+                onChange = { showLocationDialog = true },
+            )
         }
 
         // 3. Severity & individuals
@@ -243,8 +266,14 @@ fun ReportScreen(
                 MediaButton(
                     icon = Icons.Filled.AddAPhoto,
                     title = "Add Photo",
-                    subtitle = "Attach evidence",
-                    onClick = { comingSoon("Photo") },
+                    subtitle = if (photos.isEmpty()) "Attach evidence" else "${photos.size}/${PhotoUtils.MaxPhotos} added",
+                    onClick = {
+                        if (photos.size >= PhotoUtils.MaxPhotos) {
+                            Toast.makeText(context, "You can attach up to ${PhotoUtils.MaxPhotos} photos", Toast.LENGTH_SHORT).show()
+                        } else {
+                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 MediaButton(
@@ -254,6 +283,38 @@ fun ReportScreen(
                     onClick = { comingSoon("Voice memo") },
                     modifier = Modifier.weight(1f),
                 )
+            }
+
+            if (photos.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    photos.forEach { uriString ->
+                        Box(modifier = Modifier.size(84.dp)) {
+                            UriImage(
+                                uri = Uri.parse(uriString),
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(12.dp)),
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(22.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { photos = photos - uriString },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Remove photo",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Text(
@@ -338,6 +399,22 @@ fun ReportScreen(
 
         Spacer(Modifier.height(8.dp))
     }
+
+    if (showLocationDialog) {
+        LocationPickerDialog(
+            initialLat = pinLat,
+            initialLon = pinLon,
+            gpsLocation = userLocation,
+            initialNote = locationNote,
+            onConfirm = { lat, lon, note ->
+                pinLat = lat
+                pinLon = lon
+                locationNote = note
+                showLocationDialog = false
+            },
+            onDismiss = { showLocationDialog = false },
+        )
+    }
 }
 
 // ---------- Header and progress ----------
@@ -395,47 +472,6 @@ private fun ReportHeader(onProfile: () -> Unit) {
                 tint = InkDark,
             )
         }
-    }
-}
-
-@Composable
-private fun ProgressBlock(step: Int, percent: Int) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "STEP $step OF 4",
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = ResqRed,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(ResqRedTint)
-                    .padding(horizontal = 8.dp, vertical = 3.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "• Incident Details",
-                fontSize = 11.sp,
-                color = InkMuted,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = "$percent%",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = InkDark,
-            )
-        }
-        LinearProgressIndicator(
-            progress = { percent / 100f },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(5.dp)
-                .clip(CircleShape),
-            color = ResqRed,
-            trackColor = BorderGray,
-        )
     }
 }
 
@@ -578,7 +614,8 @@ private fun formatCoordinates(lat: Double, lon: Double): String {
 }
 
 @Composable
-private fun LocationRow(userLocation: UserLocation?, onChange: () -> Unit) {
+private fun LocationRow(userLocation: UserLocation?, note: String, pinned: Boolean, onChange: () -> Unit) {
+    val street by rememberStreetName(userLocation)
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -605,9 +642,14 @@ private fun LocationRow(userLocation: UserLocation?, onChange: () -> Unit) {
         Spacer(Modifier.width(12.dp))
 
         Column(Modifier.weight(1f)) {
-            // TODO: reverse-geocode the GPS point (needs internet) or use the nearest known purok offline
             Text(
-                text = "Purok 2, Military Cut-off Rd",
+                text = when {
+                    note.isNotBlank() -> note
+                    pinned && street == null -> "Pinned on map"
+                    street != null -> street.orEmpty()
+                    userLocation != null -> "Current location"
+                    else -> "Finding your location..."
+                },
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = InkDark,
@@ -615,19 +657,17 @@ private fun LocationRow(userLocation: UserLocation?, onChange: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "Brgy. Military Cut-off, Baguio City",
+                text = when {
+                    pinned -> "Pinned on the map"
+                    userLocation != null && userLocation.accuracyM > 0f ->
+                        "Your GPS location ±${userLocation.accuracyM.toInt()} m"
+                    userLocation != null -> "Your GPS location"
+                    else -> "Waiting for GPS..."
+                },
                 fontSize = 11.sp,
                 color = InkMuted,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = userLocation?.let { formatCoordinates(it.latitude, it.longitude) }
-                    ?: "Locating...",
-                fontSize = 10.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Bold,
-                color = ResqRed,
             )
         }
 
@@ -642,7 +682,7 @@ private fun LocationRow(userLocation: UserLocation?, onChange: () -> Unit) {
                 contentColor = InkDark,
             ),
         ) {
-            Text("Change", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (note.isBlank()) "Change" else "Edit", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

@@ -3,6 +3,7 @@ package com.example.resqhub
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -47,6 +48,8 @@ data class ReportDraft(
     val lat: Double?,
     val lon: Double?,
     val accuracyM: Float?,
+    val photoUris: List<String> = emptyList(),   // picked pictures (uploaded after the report is sent)
+    val address: String = "",                    // where the resident says it is (optional)
 )
 
 data class CreatedIncident(
@@ -88,6 +91,18 @@ data class AnnouncementRow(
     val isActive: Boolean = true, // false = unpublished
 )
 
+/** A report as everyone may see it: no names, phone numbers, photos or exact coordinates. */
+data class PublicReportRow(
+    val id: String,
+    val code: String,
+    val category: String,
+    val severity: String,
+    val status: String,
+    val title: String,
+    val address: String,
+    val createdAt: String,
+)
+
 data class ProfileRow(
     val id: String,
     val fullName: String,
@@ -115,16 +130,19 @@ data class IncidentRow(
     val reporterName: String,
     val reporterPhone: String,
     val responderId: String,
+    val photos: List<String> = emptyList(),   // storage paths of attached pictures
 )
 
 object Supabase {
 
     private lateinit var prefs: SharedPreferences
+    private lateinit var appContext: Context
     private var session: Session? = null
 
     /** Call once with any context. Safe to call many times. */
     fun init(context: Context) {
         if (::prefs.isInitialized) return
+        appContext = context.applicationContext
         prefs = context.applicationContext.getSharedPreferences("resqhub_session", Context.MODE_PRIVATE)
         session = loadSession()
     }
@@ -149,6 +167,36 @@ object Supabase {
         saveSession(parseSession(JSONObject(text)))
     }
 
+    /**
+     * Creates a citizen account. The database adds the profile row by itself.
+     * Returns true if the user is now logged in, or false if Supabase wants
+     * the email confirmed first (only when "Confirm email" is on).
+     */
+    suspend fun signUp(email: String, password: String, fullName: String, phone: String): Boolean {
+        val body = JSONObject()
+            .put("email", email.trim())
+            .put("password", password)
+            .put(
+                "data",
+                JSONObject().put("full_name", fullName.trim()).put("phone", phone.trim())
+            )
+            .toString()
+        val (code, text) = request("POST", "/auth/v1/signup", body)
+        if (code !in 200..299) {
+            throw ApiException(
+                message = errorMessage(text, "Could not create your account. Please try again."),
+                statusCode = code,
+                isAuthError = false,
+            )
+        }
+        val o = JSONObject(text)
+        if (o.has("access_token")) {
+            saveSession(parseSession(o))
+            return true
+        }
+        return false
+    }
+
     suspend fun signOut() {
         val old = session
         clearSession()
@@ -169,6 +217,7 @@ object Supabase {
             put("people_count", draft.people)
             put("vulnerable", draft.vulnerable)
             put("details", if (draft.details.isBlank()) JSONObject.NULL else draft.details)
+            if (draft.address.isNotBlank()) put("address", draft.address)
             draft.lat?.let { put("lat", it) }
             draft.lon?.let { put("lon", it) }
             draft.accuracyM?.let { put("accuracy_m", it.toDouble()) }
@@ -248,6 +297,101 @@ object Supabase {
         prefs.edit().putString("profile_json", o.toString()).apply()
     }
 
+    // ---------- Photos ----------
+
+    /**
+     * Uploads the pictures to the private "report-photos" bucket and attaches them to the report.
+     * Returns how many pictures could NOT be uploaded (0 = all good).
+     */
+    suspend fun uploadAndAttachPhotos(incidentId: String, photos: List<ByteArray>): Int {
+        val token = validToken()
+        val uid = session?.userId ?: throw ApiException("Please log in again.", 401, true)
+
+        val paths = mutableListOf<String>()
+        var failed = 0
+        for (bytes in photos) {
+            val path = "$uid/${java.util.UUID.randomUUID()}.jpg"
+            try {
+                uploadFile("/storage/v1/object/report-photos/$path", bytes, "image/jpeg", token)
+                paths += path
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e("Supabase", "photo upload failed", e)
+                failed++
+            }
+        }
+        if (paths.isNotEmpty()) {
+            callFunction(
+                "attach_incident_photos",
+                JSONObject().put("p_incident", incidentId).put("p_paths", JSONArray(paths)).toString(),
+            )
+        }
+        return failed
+    }
+
+    /** Downloads one report photo (responders can open any; citizens only their own). */
+    suspend fun downloadReportPhoto(path: String): ByteArray {
+        val token = validToken()
+        return network("GET photo") {
+            val c = URL("${SupabaseConfig.URL}/storage/v1/object/authenticated/report-photos/$path")
+                .openConnection() as HttpURLConnection
+            try {
+                c.connectTimeout = 15_000
+                c.readTimeout = 30_000
+                c.setRequestProperty("apikey", SupabaseConfig.PUBLISHABLE_KEY)
+                c.setRequestProperty("Authorization", "Bearer $token")
+                val code = c.responseCode
+                if (code !in 200..299) throw ApiException("Could not load the photo.", code, code == 401)
+                c.inputStream.use { it.readBytes() }
+            } finally {
+                c.disconnect()
+            }
+        }
+    }
+
+    private suspend fun uploadFile(path: String, bytes: ByteArray, contentType: String, token: String) {
+        network("POST $path") {
+            val c = URL(SupabaseConfig.URL + path).openConnection() as HttpURLConnection
+            try {
+                c.requestMethod = "POST"
+                c.connectTimeout = 15_000
+                c.readTimeout = 60_000
+                c.doOutput = true
+                c.setFixedLengthStreamingMode(bytes.size)
+                c.setRequestProperty("apikey", SupabaseConfig.PUBLISHABLE_KEY)
+                c.setRequestProperty("Authorization", "Bearer $token")
+                c.setRequestProperty("Content-Type", contentType)
+                c.outputStream.use { it.write(bytes) }
+                val code = c.responseCode
+                if (code !in 200..299) {
+                    val text = c.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    throw ApiException(errorMessage(text, "Could not upload the photo."), code, code == 401)
+                }
+            } finally {
+                c.disconnect()
+            }
+        }
+    }
+
+    /** Runs a network step on the IO thread and turns connection problems into friendly messages. */
+    private suspend fun <T> network(label: String, block: () -> T): T = withContext(Dispatchers.IO) {
+        try {
+            block()
+        } catch (e: ApiException) {
+            throw e
+        } catch (e: UnknownHostException) {
+            Log.e("Supabase", "$label failed", e)
+            throw ApiException("No internet connection. Please check your connection and try again.")
+        } catch (e: SocketTimeoutException) {
+            Log.e("Supabase", "$label failed", e)
+            throw ApiException("The connection timed out. Please try again.")
+        } catch (e: IOException) {
+            Log.e("Supabase", "$label failed", e)
+            throw ApiException("Network error (${e.javaClass.simpleName}: ${e.message})")
+        }
+    }
+
     // ---------- Reports: citizen side ----------
 
     /** Current status of one report (the citizen's dispatch screen polls this). */
@@ -280,6 +424,8 @@ object Supabase {
                 reporterName = reporter?.str("full_name") ?: "",
                 reporterPhone = reporter?.str("phone") ?: "",
                 responderId = o.str("responder_id"),
+                photos = o.optJSONArray("photos")?.let { a -> (0 until a.length()).map { a.getString(it) } }
+                    ?: emptyList(),
             )
         }
 
@@ -289,6 +435,50 @@ object Supabase {
             "update_incident_status",
             JSONObject().put("p_incident", incidentId).put("p_status", status).toString(),
         )
+    }
+
+    /** All recent reports in the barangay, with private details left out (see the SQL function). */
+    suspend fun getPublicReports(): List<PublicReportRow> {
+        val token = validToken()
+        val (code, text) = request("POST", "/rest/v1/rpc/public_reports", "{}", token)
+        if (code !in 200..299) {
+            throw ApiException(
+                message = errorMessage(text, "Could not load reports. Please try again."),
+                statusCode = code,
+                isAuthError = code == 401,
+            )
+        }
+        val array = JSONArray(text)
+        return List(array.length()) { i ->
+            val o = array.getJSONObject(i)
+            PublicReportRow(
+                id = o.str("id"),
+                code = o.str("code"),
+                category = o.str("category"),
+                severity = o.str("severity"),
+                status = o.str("status"),
+                title = o.str("title"),
+                address = o.str("address"),
+                createdAt = o.str("created_at"),
+            )
+        }
+    }
+
+    /** Cancels the user's own report (only works before a responder accepts it). */
+    suspend fun cancelMyIncident(id: String) {
+        callFunction("cancel_my_incident", JSONObject().put("p_incident", id).toString())
+    }
+
+    /** The email the user logged in with. */
+    fun currentEmail(): String = session?.email.orEmpty()
+
+    /** Saves the user's own name and phone (through a database function). */
+    suspend fun updateMyProfile(fullName: String, phone: String) {
+        callFunction(
+            "update_my_profile",
+            JSONObject().put("p_full_name", fullName).put("p_phone", phone).toString(),
+        )
+        cachedProfile()?.let { saveProfileCache(it.copy(fullName = fullName.trim(), phone = phone.trim())) }
     }
 
     /** Standby / on_duty / busy. Also updates the saved profile so it survives a restart. */

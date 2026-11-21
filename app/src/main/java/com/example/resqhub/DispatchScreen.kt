@@ -38,12 +38,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -73,8 +76,8 @@ private val BorderGray = Color(0xFFE5E7EB)
 private val BlueAccent = Color(0xFF4F46E5)
 private val BlueTint = Color(0xFFEEF0FF)
 
-// TODO: put the real CDRRMO dispatch command number here
-private const val CdrrmoNumber = ""
+// Baguio CDRRMO (Globe line). The Smart line, 0999-678-4335, is in the hotline list on the dashboard.
+private const val CdrrmoNumber = "09276280498"
 
 /** What the Report screen hands over when the user submits. */
 data class ReportSummary(
@@ -108,8 +111,11 @@ fun DispatchScreen(
     onSos: () -> Unit = {},               // not used on this screen right now
     onProfile: () -> Unit = {},
     onClose: () -> Unit = {},
+    onCancelReport: () -> Unit = {},   // cancel my own report (before responders accept)
 ) {
     val context = LocalContext.current
+    val canCancel = status == "submitted" || status == "acknowledged"
+    var confirmCancel by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -159,7 +165,30 @@ fun DispatchScreen(
             )
         }
 
-        SlideToComplete(onComplete = onClose)
+        SlideToComplete(
+            label = if (canCancel) "SLIDE TO CANCEL REPORT" else "SLIDE TO CLOSE",
+            onComplete = { if (canCancel) confirmCancel = true else onClose() },
+        )
+    }
+
+    if (confirmCancel) {
+        AlertDialog(
+            onDismissRequest = { confirmCancel = false },
+            title = { Text("Cancel this report?") },
+            text = {
+                Text("Use this if you sent it by mistake or you no longer need help. Responders will stop seeing it.")
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmCancel = false; onCancelReport() }) {
+                    Text("Cancel report", color = ResqRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCancel = false }) {
+                    Text("Keep it", color = InkMuted)
+                }
+            },
+        )
     }
 }
 
@@ -301,7 +330,7 @@ private fun DispatchSummaryCard(
 // ---------- Slide to complete ----------
 
 @Composable
-private fun SlideToComplete(onComplete: () -> Unit) {
+private fun SlideToComplete(label: String, onComplete: () -> Unit) {
     val density = LocalDensity.current
     var offsetPx by remember { mutableFloatStateOf(0f) }
 
@@ -327,7 +356,7 @@ private fun SlideToComplete(onComplete: () -> Unit) {
             )
             Spacer(Modifier.width(4.dp))
             Text(
-                text = "SLIDE TO COMPLETE DISPATCH",
+                text = label,
                 fontSize = 11.sp,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
